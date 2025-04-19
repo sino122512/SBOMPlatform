@@ -9,54 +9,88 @@ public class Component {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 软件包名称
+    // 对应 Schema 中的 id 字段 (PURL/UUID 等)
+    private String sbomRef;
     private String name;
-    // 版本
     private String version;
-    // 组件类型，如 library、application 等
     private String type;
-    // 可选：许可证信息
     private String license;
-    // 可选：描述信息
+    private String purl;
+    private String cpe;
+
     @Column(length = 1024)
     private String description;
 
-    // getter 和 setter
-    // ...（省略生成代码，可使用 IDE 自动生成）
+    // getters/setters…
 
     public Long getId() {
         return id;
     }
+
     public void setId(Long id) {
         this.id = id;
     }
+
+    public String getSbomRef() {
+        return sbomRef;
+    }
+
+    public void setSbomRef(String sbomRef) {
+        this.sbomRef = sbomRef;
+    }
+
     public String getName() {
         return name;
     }
+
     public void setName(String name) {
         this.name = name;
     }
+
     public String getVersion() {
         return version;
     }
+
     public void setVersion(String version) {
         this.version = version;
     }
+
     public String getType() {
         return type;
     }
+
     public void setType(String type) {
         this.type = type;
     }
+
     public String getLicense() {
         return license;
     }
+
     public void setLicense(String license) {
         this.license = license;
     }
+
+    public String getPurl() {
+        return purl;
+    }
+
+    public void setPurl(String purl) {
+        this.purl = purl;
+    }
+
+    public String getCpe() {
+        return cpe;
+    }
+
+    public void setCpe(String cpe) {
+        this.cpe = cpe;
+    }
+
     public String getDescription() {
         return description;
     }
+
     public void setDescription(String description) {
         this.description = description;
     }

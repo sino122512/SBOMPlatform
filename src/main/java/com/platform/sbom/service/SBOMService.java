@@ -1,83 +1,74 @@
 package com.platform.sbom.service;
 
-import com.platform.sbom.model.Component;
-import com.platform.sbom.model.SBOM;
+import com.platform.sbom.converter.SBOMConverter;
+import com.platform.sbom.mongo.SBOMDocument;
+import com.platform.sbom.mongo.SBOMDocumentRepository;
+import com.platform.sbom.model.*;
 import com.platform.sbom.repository.SBOMRepository;
 import org.springframework.stereotype.Service;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.*;
 
 @Service
 public class SBOMService {
-    private final SBOMRepository sbomRepository;
-    private final ScannerService scannerService;
+    private final SBOMRepository repo;
+    private final SBOMDocumentRepository docRepo;
+    private final ScannerService scanner;
+    private final SBOMConverter converter;
 
-    public SBOMService(SBOMRepository sbomRepository, ScannerService scannerService) {
-        this.sbomRepository = sbomRepository;
-        this.scannerService = scannerService;
+    public SBOMService(SBOMRepository repo, SBOMDocumentRepository docRepo,
+                       ScannerService scanner, SBOMConverter converter) {
+        this.repo = repo; this.docRepo = docRepo;
+        this.scanner = scanner; this.converter = converter;
+    }
+    public boolean existsById(Long id){
+        return repo.existsById(id);
+    }
+    public List<SBOM> listAll() { return repo.findAll(); }
+    public Optional<SBOM> find(Long id) { return repo.findById(id); }
+
+    @Transactional
+    public SBOM generate(String name, MultipartFile[] folder, MultipartFile img) throws Exception {
+        // 保存并扫描文件夹
+        File tmpF = Files.createTempDirectory("sys").toFile();
+        for (MultipartFile mf: folder) {
+            File dest = new File(tmpF, mf.getOriginalFilename());
+            dest.getParentFile().mkdirs();
+            mf.transferTo(dest);
+        }
+        List<Component> comps = scanner.scanFileSystem(tmpF.getAbsolutePath());
+        // 可扩展依赖构建
+        List<Dependency> deps = Collections.emptyList();
+
+        // 若含镜像文件
+        if (img!=null && !img.isEmpty()) {
+            File tmpI = File.createTempFile("img", ".tar");
+            img.transferTo(tmpI);
+            comps.addAll(scanner.scanContainerImageFromFile(tmpI));
+            tmpI.delete();
+        }
+        // 构建 SBOM 对象
+        SBOM sb = new SBOM();
+        sb.setName(name);
+        sb.setNamespace("urn:sbom:" + UUID.randomUUID());
+        sb.setToolName("SBOMPlatform");
+        sb.setToolVersion("1.0.0");
+        sb.setComponents(comps);
+        sb.setDependencies(deps);
+        // 保存 DB
+        SBOM saved = repo.save(sb);
+        // 存 Mongo JSON
+        String json = converter.toCustomJson(saved);
+        docRepo.save(new SBOMDocument(saved.getId(), json));
+        return saved;
     }
 
-    /**
-     * 模拟扫描目录并生成 SBOM 数据。
-     * 实际中可调用文件扫描、容器镜像解析等逻辑
-     */
-    public SBOM generateSBOM(String name, String format) {
-        SBOM sbom = new SBOM();
-        sbom.setName(name);
-        sbom.setFormat(format);
-
-        // 模拟生成组件数据,用于测试
-        List<Component> components = new ArrayList<>();
-        components.add(createComponent("spring-boot", "3.0.5", "library", "Apache-2.0", "Spring Boot 核心库"));
-        components.add(createComponent("hibernate-core", "6.2.0.Final", "library", "LGPL", "Hibernate ORM"));
-        components.add(createComponent("jackson-databind", "2.14.1", "library", "Apache-2.0", "JSON 解析库"));
-        // 可添加更多组件……
-
-        sbom.setComponents(components);
-        // 保存到数据库
-        return sbomRepository.save(sbom);
-    }
-
-    private Component createComponent(String name, String version, String type, String license, String description) {
-        Component comp = new Component();
-        comp.setName(name);
-        comp.setVersion(version);
-        comp.setType(type);
-        comp.setLicense(license);
-        comp.setDescription(description);
-        return comp;
-    }
-
-    public List<SBOM> getAllSBOMs() {
-        return sbomRepository.findAll();
-    }
-
-    public SBOM getSBOMById(Long id) {
-        return sbomRepository.findById(id).orElse(null);
-    }
-
-    /**
-     * 根据文件系统目录生成 SBOM（调用扫描模块）
-     */
-    public SBOM generateSBOMFromDirectory(String name, String format, String dirPath) {
-        List<Component> components = scannerService.scanFileSystem(dirPath);
-        SBOM sbom = new SBOM();
-        sbom.setName(name);
-        sbom.setFormat(format);
-        sbom.setComponents(components);
-        return sbomRepository.save(sbom);
-    }
-
-    /**
-     * 根据容器镜像生成 SBOM（调用扫描模块）
-     */
-    public SBOM generateSBOMFromImage(String imageName, String name, String format) {
-        List<Component> components = scannerService.scanContainerImage(imageName);
-        SBOM sbom = new SBOM();
-        sbom.setName(name);
-        sbom.setFormat(format);
-        sbom.setComponents(components);
-        return sbomRepository.save(sbom);
+    @Transactional
+    public void delete(Long id) {
+        docRepo.deleteBySbomId(id);
+        repo.deleteById(id);
     }
 }

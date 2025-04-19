@@ -1,9 +1,11 @@
 package com.platform.sbom.model;
 
-
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.persistence.*;
+
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 public class SBOM {
@@ -11,55 +13,117 @@ public class SBOM {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // SBOM 名称，比如项目名称
+    // 文档级元数据
+    private String sbomId = UUID.randomUUID().toString();
+    private Integer version = 1;
     private String name;
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime timestamp = LocalDateTime.now();
+    private String namespace;
+    private String toolName;
+    private String toolVersion;
 
-    // 生成时间
-    private LocalDateTime generatedAt;
-
-    // 存储 SBOM 格式（例如 CycloneDX 或 SPDX）
-    private String format;
-
-    // 组件列表，一个 SBOM 包含多个组件
+    // 组件摘要
     @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
-    @JoinColumn(name = "sbom_id")
+    @JoinColumn(name = "sbom_id", referencedColumnName = "id")
     private List<Component> components;
 
-    // getter 和 setter
+    // 依赖关系列表
+    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @JoinColumn(name = "sbom_id", referencedColumnName = "id")
+    private List<Dependency> dependencies;
 
-    public SBOM() {
-        this.generatedAt = LocalDateTime.now();
-    }
+    // 扫描源信息，本例不持久化
+    @Transient
+    private SourceInfo source;
 
-    // getters and setters
+    // getters/setters omitted for brevity
+
     public Long getId() {
         return id;
     }
+
     public void setId(Long id) {
         this.id = id;
     }
+
+    public String getSbomId() {
+        return sbomId;
+    }
+
+    public void setSbomId(String sbomId) {
+        this.sbomId = sbomId;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
+    public void setVersion(Integer version) {
+        this.version = version;
+    }
+
     public String getName() {
         return name;
     }
+
     public void setName(String name) {
         this.name = name;
     }
-    public LocalDateTime getGeneratedAt() {
-        return generatedAt;
+
+    public LocalDateTime getTimestamp() {
+        return timestamp;
     }
-    public void setGeneratedAt(LocalDateTime generatedAt) {
-        this.generatedAt = generatedAt;
+
+    public void setTimestamp(LocalDateTime timestamp) {
+        this.timestamp = timestamp;
     }
-    public String getFormat() {
-        return format;
+
+    public String getNamespace() {
+        return namespace;
     }
-    public void setFormat(String format) {
-        this.format = format;
+
+    public void setNamespace(String namespace) {
+        this.namespace = namespace;
     }
+
+    public String getToolName() {
+        return toolName;
+    }
+
+    public void setToolName(String toolName) {
+        this.toolName = toolName;
+    }
+
+    public String getToolVersion() {
+        return toolVersion;
+    }
+
+    public void setToolVersion(String toolVersion) {
+        this.toolVersion = toolVersion;
+    }
+
     public List<Component> getComponents() {
         return components;
     }
+
     public void setComponents(List<Component> components) {
         this.components = components;
+    }
+
+    public List<Dependency> getDependencies() {
+        return dependencies;
+    }
+
+    public void setDependencies(List<Dependency> dependencies) {
+        this.dependencies = dependencies;
+    }
+
+    public SourceInfo getSource() {
+        return source;
+    }
+
+    public void setSource(SourceInfo source) {
+        this.source = source;
     }
 }

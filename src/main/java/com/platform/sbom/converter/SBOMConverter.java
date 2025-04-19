@@ -1,81 +1,169 @@
 package com.platform.sbom.converter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.platform.sbom.model.Dependency;
+import com.platform.sbom.model.FileSystemInfo;
 import com.platform.sbom.model.SBOM;
+import com.platform.sbom.model.SourceInfo;
 import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
-import java.util.UUID;
 
 @Component
 public class SBOMConverter {
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+
+    public SBOMConverter(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.objectMapper.registerModule(new JavaTimeModule());
+        this.objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    }
 
     public String toSpdxJson(SBOM sbom) throws Exception {
         ObjectNode root = objectMapper.createObjectNode();
+        // SPDX document metadata
         root.put("SPDXVersion", "SPDX-2.3");
-        root.put("dataLicense", "CC0-1.0");
-        root.put("SPDXID", "SPDXRef-DOCUMENT");
-        root.put("documentName", sbom.getName());
-        root.put("documentNamespace", "https://example.com/spdx/" + UUID.randomUUID().toString());
-        root.put("created", sbom.getGeneratedAt().format(DateTimeFormatter.ISO_DATE_TIME));
+        root.put("DataLicense", "CC0-1.0");
+        root.put("SPDXID", "SPDXRef-DOCUMENT-" + sbom.getSbomId());
+        root.put("DocumentName", sbom.getName());
+        root.put("DocumentNamespace", sbom.getNamespace());
+        root.put("CreatorTool", sbom.getToolName() + "@" + sbom.getToolVersion());
+        root.put("Created", sbom.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME));
 
-        ArrayNode packagesArray = objectMapper.createArrayNode();
+        // Packages array
+        ArrayNode pkgs = objectMapper.createArrayNode();
         for (com.platform.sbom.model.Component comp : sbom.getComponents()) {
-            ObjectNode compNode = objectMapper.createObjectNode();
-            compNode.put("SPDXID", "SPDXRef-Package-" + comp.getName());
-            compNode.put("packageName", comp.getName());
-            compNode.put("packageVersion", comp.getVersion());
-            compNode.put("packageLicenseDeclared", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
-            compNode.put("packageDescription", comp.getDescription() != null ? comp.getDescription() : "");
-            packagesArray.add(compNode);
+            ObjectNode p = pkgs.addObject();
+            // use sbomRef as SPDXID
+            p.put("SPDXID", comp.getSbomRef());
+            p.put("PackageName", comp.getName());
+            p.put("PackageVersion", comp.getVersion());
+            p.put("PackageLicenseDeclared", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
+            p.put("PackageDownloadLocation", comp.getPurl() != null ? comp.getPurl() : "NOASSERTION");
+            p.put("PackageChecksum", "NOASSERTION");
+            p.put("PackageSupplier", "NOASSERTION");
+            p.put("PackageVerificationCode", "");
+            p.put("PackageDescription", comp.getDescription() != null ? comp.getDescription() : "");
         }
-        root.set("packages", packagesArray);
+        root.set("Packages", pkgs);
+
         return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
     }
 
     public String toCycloneDxJson(SBOM sbom) throws Exception {
         ObjectNode root = objectMapper.createObjectNode();
+        // CycloneDX top-level
         root.put("bomFormat", "CycloneDX");
         root.put("specVersion", "1.4");
-        root.put("serialNumber", "urn:uuid:" + UUID.randomUUID().toString());
-        root.put("version", 1);
+        root.put("serialNumber", "urn:uuid:" + sbom.getSbomId());
+        root.put("version", sbom.getVersion());
 
-        ObjectNode metadata = objectMapper.createObjectNode();
-        metadata.put("timestamp", sbom.getGeneratedAt().format(DateTimeFormatter.ISO_DATE_TIME));
-        ArrayNode tools = objectMapper.createArrayNode();
-        ObjectNode tool = objectMapper.createObjectNode();
+        // metadata
+        ObjectNode metadata = root.putObject("metadata");
+        metadata.put("timestamp", sbom.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME));
+        // tools
+        ArrayNode tools = metadata.putArray("tools");
+        ObjectNode tool = tools.addObject();
         tool.put("vendor", "SBOMPlatform");
-        tool.put("name", "SBOM Generator");
-        tool.put("version", "1.0.0");
-        tools.add(tool);
-        metadata.set("tools", tools);
-        root.set("metadata", metadata);
-
-        ArrayNode componentsArray = objectMapper.createArrayNode();
-        for (com.platform.sbom.model.Component comp : sbom.getComponents()) {
-            ObjectNode compNode = objectMapper.createObjectNode();
-            compNode.put("bom-ref", "pkg:" + comp.getName() + "@" + comp.getVersion());
-            compNode.put("type", comp.getType());
-            compNode.put("name", comp.getName());
-            compNode.put("version", comp.getVersion());
-            if (comp.getLicense() != null) {
-                ObjectNode licenseNode = objectMapper.createObjectNode();
-                licenseNode.put("id", comp.getLicense());
-                ArrayNode licenseArray = objectMapper.createArrayNode();
-                licenseArray.add(licenseNode);
-                compNode.set("licenses", licenseArray);
+        tool.put("name", sbom.getToolName());
+        tool.put("version", sbom.getToolVersion());
+        // source info as metadata.property
+        SourceInfo src = sbom.getSource();
+        if (src != null) {
+            ObjectNode props = metadata.putObject("properties");
+            props.put("filesystem.path", src.getFilesystem().getPath());
+            props.put("filesystem.recursive", String.valueOf(src.getFilesystem().isRecursive()));
+            if (src.getImage() != null) {
+                props.put("image.id", src.getImage().getImageId());
+                props.put("image.registry", src.getImage().getRegistry());
             }
-            componentsArray.add(compNode);
         }
-        root.set("components", componentsArray);
+
+        // components
+        ArrayNode comps = root.putArray("components");
+        for (com.platform.sbom.model.Component comp : sbom.getComponents()) {
+            ObjectNode c = comps.addObject();
+            c.put("bom-ref", comp.getSbomRef());
+            c.put("type", comp.getType());
+            c.put("name", comp.getName());
+            c.put("version", comp.getVersion());
+            if (comp.getLicense() != null) {
+                ArrayNode licArr = c.putArray("licenses");
+                ObjectNode lic = licArr.addObject();
+                lic.put("license", comp.getLicense());
+            }
+            if (comp.getPurl() != null) {
+                ArrayNode xr = c.putArray("externalReferences");
+                ObjectNode ref = xr.addObject();
+                ref.put("type", "purl");
+                ref.put("url", comp.getPurl());
+            }
+        }
+
+        // dependencies (optional)
+        if (sbom.getDependencies() != null && !sbom.getDependencies().isEmpty()) {
+            ArrayNode deps = root.putArray("dependencies");
+            for (Dependency d : sbom.getDependencies()) {
+                ObjectNode dn = deps.addObject();
+                dn.put("ref", d.getRef());
+                ArrayNode on = dn.putArray("dependsOn");
+                d.getDependsOn().forEach(on::add);
+            }
+        }
+
         return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
     }
 
-    public String toCustomJson(SBOM sbom) throws Exception {
-        // 直接序列化 SBOM 对象为 JSON
-        return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(sbom);
+    public String toCustomJson(SBOM s) throws Exception {
+        ObjectNode r = objectMapper.createObjectNode();
+        // sbom
+        ObjectNode m = r.putObject("sbom");
+        m.put("id", s.getSbomId());
+        m.put("version", s.getVersion());
+        m.put("name", s.getName());
+        m.put("timestamp", s.getTimestamp().toString());
+        m.put("namespace", s.getNamespace());
+        ObjectNode t = m.putObject("tool");
+        t.put("name", s.getToolName());
+        t.put("version", s.getToolVersion());
+        // components
+        ArrayNode ca = r.putArray("components");
+        s.getComponents().forEach(c->{
+            ObjectNode n = ca.addObject();
+            n.put("id", c.getSbomRef());
+            n.put("name", c.getName());
+            n.put("version", c.getVersion());
+            n.put("type", c.getType());
+            n.put("license", c.getLicense());
+            n.put("purl", c.getPurl());
+            n.put("cpe", c.getCpe());
+            n.put("description", c.getDescription());
+        });
+        // dependencies
+        ArrayNode da = r.putArray("dependencies");
+        s.getDependencies().forEach(d->{
+            ObjectNode n = da.addObject();
+            n.put("ref", d.getRef());
+            ArrayNode d2 = n.putArray("dependsOn");
+            d.getDependsOn().forEach(d2::add);
+        });
+        // source
+        SourceInfo src = s.getSource();
+        ObjectNode sn = r.putObject("source");
+        FileSystemInfo fs = src.getFilesystem();
+        ObjectNode fsn = sn.putObject("filesystem");
+        fsn.put("path", fs.getPath());
+        fsn.put("recursive", fs.isRecursive());
+        if (src.getImage()!=null) {
+            ObjectNode in = sn.putObject("image");
+            in.put("imageId", src.getImage().getImageId());
+            in.put("registry", src.getImage().getRegistry());
+        }
+        return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(r);
     }
 }
+

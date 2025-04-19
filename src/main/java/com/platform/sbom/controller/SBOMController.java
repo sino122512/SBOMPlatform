@@ -3,14 +3,17 @@ package com.platform.sbom.controller;
 import com.platform.sbom.converter.SBOMConverter;
 import com.platform.sbom.model.SBOM;
 import com.platform.sbom.service.SBOMService;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import lombok.extern.log4j.Log4j2;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+
+@Log4j2
 @RestController
 @RequestMapping("/api/sbom")
 public class SBOMController {
@@ -23,30 +26,18 @@ public class SBOMController {
         this.sbomConverter = sbomConverter;
     }
 
-    @PostMapping("/generate/dir")
-    public ResponseEntity<SBOM> generateFromDirectory(@RequestParam String name,
-                                                      @RequestParam(defaultValue = "cyclonedx-json") String format,
-                                                      @RequestParam String path) {
-        SBOM sbom = sbomService.generateSBOMFromDirectory(name, format, path);
-        return ResponseEntity.ok(sbom);
-    }
 
-    @PostMapping("/generate/image")
-    public ResponseEntity<SBOM> generateFromImage(@RequestParam String imageName,
-                                                  @RequestParam String name,
-                                                  @RequestParam(defaultValue = "cyclonedx-json") String format) {
-        SBOM sbom = sbomService.generateSBOMFromImage(imageName, name, format);
-        return ResponseEntity.ok(sbom);
-    }
 
     @GetMapping
     public ResponseEntity<List<SBOM>> getAllSBOMs() {
-        return ResponseEntity.ok(sbomService.getAllSBOMs());
+        return ResponseEntity.ok(sbomService.listAll());
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<SBOM> getSBOMById(@PathVariable Long id) {
-        SBOM sbom = sbomService.getSBOMById(id);
+    public ResponseEntity<SBOM> generateForSystem(@RequestParam String name,
+                                                  @RequestParam("systemFolder") MultipartFile[] folder,
+                                                  @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {
+        SBOM sbom = sbomService.generate(name, folder, img);
         if (sbom == null) {
             return ResponseEntity.notFound().build();
         }
@@ -54,37 +45,52 @@ public class SBOMController {
     }
 
     /**
-     * 下载指定 SBOM 的 JSON 文件，支持 format 参数：spdx, cyclonedx, custom
+     * 下载 SBOM JSON 文件，支持 format 参数：
+     * - spdx ：SPDX JSON
+     * - cyclonedx ：CycloneDX JSON
+     * - custom（或 blank）: 自定义统一格式
      */
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> downloadSBOM(@PathVariable Long id,
                                                @RequestParam(defaultValue = "custom") String format) {
-        SBOM sbom = sbomService.getSBOMById(id);
-        if (sbom == null) {
-            return ResponseEntity.notFound().build();
-        }
+        SBOM sbom = sbomService.find(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         try {
-            String jsonOutput;
+            String json;
             switch (format.toLowerCase()) {
                 case "spdx":
-                    jsonOutput = sbomConverter.toSpdxJson(sbom);
+                    json = sbomConverter.toSpdxJson(sbom);
                     break;
                 case "cyclonedx":
-                    jsonOutput = sbomConverter.toCycloneDxJson(sbom);
+                    json = sbomConverter.toCycloneDxJson(sbom);
                     break;
                 case "custom":
                 default:
-                    jsonOutput = sbomConverter.toCustomJson(sbom);
+                    json = sbomConverter.toCustomJson(sbom);
                     break;
             }
-            byte[] fileContent = jsonOutput.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setContentDispositionFormData("attachment", "sbom-" + id + "-" + format + ".json");
-            return ResponseEntity.ok().headers(headers).body(fileContent);
+            headers.setContentDisposition(ContentDisposition.attachment()
+                    .filename("sbom-" + id + "-" + format + ".json")
+                    .build());
+            return ResponseEntity.ok().headers(headers).body(bytes);
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().build();
+            log.error("SBOM JSON 生成失败", e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "SBOM JSON 生成失败", e);
         }
+    }
+
+    /**
+     * 删除指定 id 的 SBOM
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteSBOM(@PathVariable Long id) {
+        if (!sbomService.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        sbomService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }
