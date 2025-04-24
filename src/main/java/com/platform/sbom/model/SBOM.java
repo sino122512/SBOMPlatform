@@ -10,7 +10,7 @@ import java.util.UUID;
 @Entity
 public class SBOM {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    //@GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     // 文档级元数据

@@ -33,6 +33,16 @@ public class SBOMController {
         return ResponseEntity.ok(sbomService.listAll());
     }
 
+    /**
+     * 根据 ID 获取 SBOM 详情
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<SBOM> getSBOMById(@PathVariable Long id) {
+        return sbomService.find(id)
+                .map(ResponseEntity::ok)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "SBOM not found with id: " + id));
+    }
+
     @PostMapping("/generate/system")
     public ResponseEntity<SBOM> generateForSystem(@RequestParam String name,
                                                   @RequestParam("systemFolder") MultipartFile[] folder,

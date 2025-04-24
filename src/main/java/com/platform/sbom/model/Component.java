@@ -18,10 +18,16 @@ public class Component {
     private String purl;
     private String cpe;
 
+    // 新增元数据字段
+    private String filePath;       // 文件路径
+    private String sourceRepo;     // 包来源
+    private String vendor;         // 供应商
+    private String homePage;       // 主页
+
     @Column(length = 1024)
     private String description;
 
-    // getters/setters…
+    // getters/setters...
 
     public Long getId() {
         return id;
@@ -85,6 +91,38 @@ public class Component {
 
     public void setCpe(String cpe) {
         this.cpe = cpe;
+    }
+
+    public String getFilePath() {
+        return filePath;
+    }
+
+    public void setFilePath(String filePath) {
+        this.filePath = filePath;
+    }
+
+    public String getSourceRepo() {
+        return sourceRepo;
+    }
+
+    public void setSourceRepo(String sourceRepo) {
+        this.sourceRepo = sourceRepo;
+    }
+
+    public String getVendor() {
+        return vendor;
+    }
+
+    public void setVendor(String vendor) {
+        this.vendor = vendor;
+    }
+
+    public String getHomePage() {
+        return homePage;
+    }
+
+    public void setHomePage(String homePage) {
+        this.homePage = homePage;
     }
 
     public String getDescription() {

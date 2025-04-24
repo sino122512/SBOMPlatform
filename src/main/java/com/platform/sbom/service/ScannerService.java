@@ -1,13 +1,20 @@
 package com.platform.sbom.service;
 
 import com.platform.sbom.model.Component;
-import org.apache.commons.compress.archivers.tar.*;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.springframework.stereotype.Service;
+
 import java.io.*;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.jar.*;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class ScannerService {
@@ -19,7 +26,11 @@ public class ScannerService {
                     .forEach(p -> {
                         Component c = parseJarManifest(p.toFile());
                         if (c == null) c = parseJarFilename(p.getFileName().toString());
-                        if (c != null) list.add(c);
+                        if (c != null) {
+                            // 记录文件路径
+                            c.setFilePath(p.toString());
+                            list.add(c);
+                        }
                     });
         } catch (IOException ignored) {}
         return list;
@@ -45,6 +56,12 @@ public class ScannerService {
                 }
             }
             list.addAll(scanFileSystem(tmp.toString()));
+            // 对容器镜像中发现的组件进行标记
+            list.forEach(c -> {
+                if (c.getSourceRepo() == null) {
+                    c.setSourceRepo("container-image");
+                }
+            });
             deleteRec(tmp);
         } catch (IOException ignored) {}
         return list;
@@ -63,6 +80,18 @@ public class ScannerService {
                     c.setVersion(v);
                     c.setType("library");
                     c.setDescription("From MANIFEST");
+
+                    // 增强的元数据收集
+                    c.setLicense(m.getMainAttributes().getValue("Implementation-License"));
+                    c.setVendor(m.getMainAttributes().getValue("Implementation-Vendor"));
+                    c.setHomePage(m.getMainAttributes().getValue("Implementation-URL"));
+                    c.setSourceRepo(extractSourceRepo(m));
+
+                    // 尝试构建 purl
+                    if (c.getPurl() == null && t != null && v != null) {
+                        c.setPurl("pkg:maven/" + normalizePackageName(t) + "/" + normalizePackageName(t) + "@" + v);
+                    }
+
                     return c;
                 }
             }
@@ -80,9 +109,45 @@ public class ScannerService {
             c.setVersion(name.substring(idx+1));
             c.setType("library");
             c.setDescription("From filename");
+
+            // 尝试检测 Maven 坐标
+            Pattern p = Pattern.compile("(.+)-([0-9].+)");
+            Matcher m = p.matcher(name);
+            if (m.matches()) {
+                String artifactId = m.group(1);
+                String version = m.group(2);
+                // 尝试从文件名猜测 groupId
+                String groupId = guessGroupId(artifactId);
+                c.setPurl("pkg:maven/" + groupId + "/" + artifactId + "@" + version);
+            }
+
             return c;
         }
         return null;
+    }
+
+    // 从 MANIFEST 中提取源代码库信息
+    private String extractSourceRepo(Manifest manifest) {
+        String scm = manifest.getMainAttributes().getValue("SCM-URL");
+        if (scm != null) return scm;
+
+        String url = manifest.getMainAttributes().getValue("Implementation-URL");
+        if (url != null && (url.contains("github.com") || url.contains("gitlab") || url.contains("bitbucket"))) {
+            return url;
+        }
+
+        return null;
+    }
+
+    // normalize package name for purl
+    private String normalizePackageName(String name) {
+        return name.toLowerCase().replace(" ", "-");
+    }
+
+    // 基于常见命名约定猜测 groupId
+    private String guessGroupId(String artifactId) {
+        // 默认使用 artifactId 作为 groupId
+        return artifactId;
     }
 
     private void deleteRec(Path p) throws IOException {

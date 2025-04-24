@@ -45,9 +45,22 @@ public class SBOMConverter {
             p.put("PackageLicenseDeclared", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
             p.put("PackageDownloadLocation", comp.getPurl() != null ? comp.getPurl() : "NOASSERTION");
             p.put("PackageChecksum", "NOASSERTION");
-            p.put("PackageSupplier", "NOASSERTION");
+            p.put("PackageSupplier", comp.getVendor() != null ? comp.getVendor() : "NOASSERTION");
             p.put("PackageVerificationCode", "");
             p.put("PackageDescription", comp.getDescription() != null ? comp.getDescription() : "");
+
+            // 添加新的元数据
+            if (comp.getFilePath() != null) {
+                p.put("PackageFileName", comp.getFilePath());
+            }
+
+            if (comp.getHomePage() != null) {
+                p.put("PackageHomePage", comp.getHomePage());
+            }
+
+            if (comp.getSourceRepo() != null) {
+                p.put("PackageSourceInfo", comp.getSourceRepo());
+            }
         }
         root.set("Packages", pkgs);
 
@@ -91,18 +104,46 @@ public class SBOMConverter {
             c.put("type", comp.getType());
             c.put("name", comp.getName());
             c.put("version", comp.getVersion());
+
+            // 添加supplier
+            if (comp.getVendor() != null) {
+                c.put("supplier", comp.getVendor());
+            }
+
             if (comp.getLicense() != null) {
                 ArrayNode licArr = c.putArray("licenses");
                 ObjectNode lic = licArr.addObject();
                 lic.put("license", comp.getLicense());
             }
+
+            // 添加扩展的元数据
+            ArrayNode xr = c.putArray("externalReferences");
+
             if (comp.getPurl() != null) {
-                ArrayNode xr = c.putArray("externalReferences");
                 ObjectNode ref = xr.addObject();
                 ref.put("type", "purl");
                 ref.put("url", comp.getPurl());
             }
+
+            if (comp.getHomePage() != null) {
+                ObjectNode ref = xr.addObject();
+                ref.put("type", "website");
+                ref.put("url", comp.getHomePage());
+            }
+
+            if (comp.getSourceRepo() != null) {
+                ObjectNode ref = xr.addObject();
+                ref.put("type", "vcs");
+                ref.put("url", comp.getSourceRepo());
+            }
+
+            // 添加文件路径作为属性
+            if (comp.getFilePath() != null) {
+                ObjectNode props = c.putObject("properties");
+                props.put("path", comp.getFilePath());
+            }
         }
+
 
         // dependencies (optional)
         if (sbom.getDependencies() != null && !sbom.getDependencies().isEmpty()) {
@@ -142,6 +183,12 @@ public class SBOMConverter {
             n.put("purl", c.getPurl());
             n.put("cpe", c.getCpe());
             n.put("description", c.getDescription());
+
+            // 添加扩展元数据
+            n.put("filePath", c.getFilePath());
+            n.put("sourceRepo", c.getSourceRepo());
+            n.put("vendor", c.getVendor());
+            n.put("homePage", c.getHomePage());
         });
         // dependencies
         ArrayNode da = r.putArray("dependencies");
