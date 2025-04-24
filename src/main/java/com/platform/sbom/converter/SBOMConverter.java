@@ -132,7 +132,7 @@ public class SBOMConverter {
         t.put("version", s.getToolVersion());
         // components
         ArrayNode ca = r.putArray("components");
-        s.getComponents().forEach(c->{
+        s.getComponents().forEach(c -> {
             ObjectNode n = ca.addObject();
             n.put("id", c.getSbomRef());
             n.put("name", c.getName());
@@ -145,23 +145,31 @@ public class SBOMConverter {
         });
         // dependencies
         ArrayNode da = r.putArray("dependencies");
-        s.getDependencies().forEach(d->{
+        s.getDependencies().forEach(d -> {
             ObjectNode n = da.addObject();
             n.put("ref", d.getRef());
             ArrayNode d2 = n.putArray("dependsOn");
             d.getDependsOn().forEach(d2::add);
         });
         // source
-        SourceInfo src = s.getSource();
         ObjectNode sn = r.putObject("source");
-        FileSystemInfo fs = src.getFilesystem();
+        SourceInfo src = s.getSource();
+
         ObjectNode fsn = sn.putObject("filesystem");
-        fsn.put("path", fs.getPath());
-        fsn.put("recursive", fs.isRecursive());
-        if (src.getImage()!=null) {
-            ObjectNode in = sn.putObject("image");
-            in.put("imageId", src.getImage().getImageId());
-            in.put("registry", src.getImage().getRegistry());
+
+        if (src != null && src.getFilesystem() != null) {
+            FileSystemInfo fs = src.getFilesystem();
+            fsn.put("path", fs.getPath());
+            fsn.put("recursive", fs.isRecursive());
+            if (src.getImage() != null) {
+                ObjectNode in = sn.putObject("image");
+                in.put("imageId", src.getImage().getImageId());
+                in.put("registry", src.getImage().getRegistry());
+            }
+        }else {
+                // Default values if source info is missing
+                fsn.put("path", "unknown");
+                fsn.put("recursive", false);
         }
         return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(r);
     }

@@ -33,7 +33,7 @@ public class SBOMController {
         return ResponseEntity.ok(sbomService.listAll());
     }
 
-    @GetMapping("/{id}")
+    @PostMapping("/generate/system")
     public ResponseEntity<SBOM> generateForSystem(@RequestParam String name,
                                                   @RequestParam("systemFolder") MultipartFile[] folder,
                                                   @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {

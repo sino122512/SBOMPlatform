@@ -3,6 +3,11 @@ package com.platform.sbom.model;
 public class SourceInfo {
     private FileSystemInfo filesystem;
     private ImageInfo image;
+
+    public SourceInfo() {
+
+    }
+
     // getters/setters…
 
     public FileSystemInfo getFilesystem() {

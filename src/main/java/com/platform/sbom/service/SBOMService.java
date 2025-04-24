@@ -43,6 +43,11 @@ public class SBOMService {
         // 可扩展依赖构建
         List<Dependency> deps = Collections.emptyList();
 
+        // Create source info
+        SourceInfo sourceInfo = new SourceInfo();
+        FileSystemInfo fsInfo = new FileSystemInfo(tmpF.getAbsolutePath(), true);
+        sourceInfo.setFilesystem(fsInfo);
+
         // 若含镜像文件
         if (img!=null && !img.isEmpty()) {
             File tmpI = File.createTempFile("img", ".tar");
