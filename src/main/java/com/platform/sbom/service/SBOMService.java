@@ -21,19 +21,151 @@ public class SBOMService {
     private final ScannerService scanner;
     private final SBOMConverter converter;
     private final JdbcTemplate jdbcTemplate;
+    private final MavenPomParserService mavenPomParser;
 
 
     public SBOMService(SBOMRepository repo, SBOMDocumentRepository docRepo,
-                       ScannerService scanner, SBOMConverter converter,JdbcTemplate jdbcTemplate) {
+                       ScannerService scanner, SBOMConverter converter, JdbcTemplate jdbcTemplate, MavenPomParserService mavenPomParser) {
         this.repo = repo; this.docRepo = docRepo;
         this.scanner = scanner; this.converter = converter;
         this.jdbcTemplate = jdbcTemplate;
+        this.mavenPomParser = mavenPomParser;
     }
     public boolean existsById(Long id){
         return repo.existsById(id);
     }
     public List<SBOM> listAll() { return repo.findAll(); }
     public Optional<SBOM> find(Long id) { return repo.findById(id); }
+
+    /**
+     * 从Maven项目生成SBOM
+     */
+    @Transactional
+    public SBOM generateFromMavenProject(String name, MultipartFile[] projectFiles, MultipartFile img) throws Exception {
+        // 保存上传的Maven项目文件到临时目录
+        File tmpDir = Files.createTempDirectory("maven_project").toFile();
+        Map<String, String> originalPaths = new HashMap<>();
+
+        // 保存所有上传文件
+        for (MultipartFile file : projectFiles) {
+            String originalName = file.getOriginalFilename();
+            if (originalName != null) {
+                // 确保路径存在
+                String relativePath = originalName;
+                File destFile = new File(tmpDir, relativePath);
+                destFile.getParentFile().mkdirs();
+                file.transferTo(destFile);
+
+                // 记录路径映射
+                originalPaths.put(destFile.getAbsolutePath(), originalName);
+            }
+        }
+
+        // 收集所有组件
+        List<Component> components = new ArrayList<>();
+
+        // 1. 扫描并解析所有pom.xml文件
+        List<File> pomFiles = mavenPomParser.findPomFiles(tmpDir.getAbsolutePath());
+        for (File pomFile : pomFiles) {
+            List<Component> pomComponents = mavenPomParser.parsePomFile(pomFile);
+            components.addAll(pomComponents);
+        }
+
+        // 2. 同时也扫描JAR文件
+        List<Component> jarComponents = scanner.scanFileSystem(tmpDir.getAbsolutePath());
+
+        // 合并组件列表，避免重复
+        Map<String, Component> uniqueComponents = new HashMap<>();
+
+        // 先添加pom.xml中的依赖，它们的数据通常更完整
+        for (Component comp : components) {
+            uniqueComponents.put(comp.getSbomRef(), comp);
+        }
+
+        // 再添加JAR扫描的结果，但不覆盖已有的
+        for (Component comp : jarComponents) {
+            if (!uniqueComponents.containsKey(comp.getSbomRef())) {
+                uniqueComponents.put(comp.getSbomRef(), comp);
+            }
+        }
+
+        // 将临时文件路径替换为原始上传文件路径
+        for (Component comp : uniqueComponents.values()) {
+            String tempPath = comp.getFilePath();
+            if (tempPath != null) {
+                for (String key : originalPaths.keySet()) {
+                    if (tempPath.startsWith(key)) {
+                        comp.setFilePath(originalPaths.get(key));
+                        break;
+                    } else if (tempPath.contains(key)) {
+                        comp.setFilePath(tempPath.replace(key, originalPaths.get(key)));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 使用当前已有的增强逻辑
+        List<Component> finalComponents = new ArrayList<>(uniqueComponents.values());
+        enhanceLicenseInfo(finalComponents);
+        enrichMavenMetadata(finalComponents);
+
+        // 构建依赖关系
+        List<Dependency> deps = buildDependencies(finalComponents);
+
+        // 创建源信息
+        SourceInfo sourceInfo = new SourceInfo();
+        FileSystemInfo fsInfo = new FileSystemInfo(tmpDir.getAbsolutePath(), true);
+        sourceInfo.setFilesystem(fsInfo);
+
+        // 若含镜像文件
+        if (img != null && !img.isEmpty()) {
+            File tmpI = File.createTempFile("img", ".tar");
+            img.transferTo(tmpI);
+            List<Component> imageComps = scanner.scanContainerImageFromFile(tmpI);
+
+            // 为镜像中的组件设置源信息
+            for (Component comp : imageComps) {
+                comp.setSourceRepo("container-image");
+                if (comp.getDescription() == null) {
+                    comp.setDescription("From container image");
+                }
+            }
+
+            finalComponents.addAll(imageComps);
+            tmpI.delete();
+
+            // 更新源信息
+            ImageInfo imgInfo = new ImageInfo(
+                    img.getOriginalFilename(),
+                    "local-upload"
+            );
+            sourceInfo.setImage(imgInfo);
+        }
+
+        // 构建SBOM对象
+        SBOM sb = new SBOM();
+        // 手动分配ID
+        Long maxId = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(id), 0) FROM sbom", Long.class);
+        sb.setId(maxId + 1);
+
+        sb.setName(name);
+        sb.setNamespace("urn:sbom:" + UUID.randomUUID());
+        sb.setToolName("SBOMPlatform");
+        sb.setToolVersion("1.0.0");
+        sb.setComponents(finalComponents);
+        sb.setDependencies(deps);
+        sb.setSource(sourceInfo);
+
+        // 保存到数据库
+        SBOM saved = repo.save(sb);
+        // 存MongoDB JSON
+        String json = converter.toCustomJson(saved);
+        docRepo.save(new SBOMDocument(saved.getId(), json));
+
+        return saved;
+    }
 
     @Transactional
     public SBOM generate(String name, MultipartFile[] folder, MultipartFile img) throws Exception {

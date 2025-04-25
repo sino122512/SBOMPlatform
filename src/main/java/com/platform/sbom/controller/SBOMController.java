@@ -55,6 +55,20 @@ public class SBOMController {
     }
 
     /**
+     * 新增：解析Maven项目并生成SBOM
+     */
+    @PostMapping("/generate/maven")
+    public ResponseEntity<SBOM> generateForMavenProject(@RequestParam String name,
+                                                        @RequestParam("mavenProject") MultipartFile[] projectFiles,
+                                                        @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {
+        SBOM sbom = sbomService.generateFromMavenProject(name, projectFiles, img);
+        if (sbom == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(sbom);
+    }
+
+    /**
      * 下载 SBOM JSON 文件，支持 format 参数：
      * - spdx ：SPDX JSON
      * - cyclonedx ：CycloneDX JSON
