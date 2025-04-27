@@ -5,6 +5,7 @@ import com.platform.sbom.model.*;
 import com.platform.sbom.mongo.SBOMDocument;
 import com.platform.sbom.mongo.SBOMDocumentRepository;
 import com.platform.sbom.repository.SBOMRepository;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,32 +15,48 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.*;
 
+@Log4j2
 @Service
 public class SBOMService {
     private final SBOMRepository repo;
     private final SBOMDocumentRepository docRepo;
     private final ScannerService scanner;
+    private final SyftService syftService;
     private final SBOMConverter converter;
     private final JdbcTemplate jdbcTemplate;
     private final MavenPomParserService mavenPomParser;
 
-
     public SBOMService(SBOMRepository repo, SBOMDocumentRepository docRepo,
-                       ScannerService scanner, SBOMConverter converter, JdbcTemplate jdbcTemplate, MavenPomParserService mavenPomParser) {
-        this.repo = repo; this.docRepo = docRepo;
-        this.scanner = scanner; this.converter = converter;
+                       ScannerService scanner, SyftService syftService,
+                       SBOMConverter converter, JdbcTemplate jdbcTemplate,
+                       MavenPomParserService mavenPomParser) {
+        this.repo = repo;
+        this.docRepo = docRepo;
+        this.scanner = scanner;
+        this.syftService = syftService;
+        this.converter = converter;
         this.jdbcTemplate = jdbcTemplate;
         this.mavenPomParser = mavenPomParser;
     }
-    public boolean existsById(Long id){
+
+    public boolean existsById(Long id) {
         return repo.existsById(id);
     }
-    public List<SBOM> listAll() { return repo.findAll(); }
-    public Optional<SBOM> find(Long id) { return repo.findById(id); }
 
+    public List<SBOM> listAll() {
+        return repo.findAll();
+    }
+
+    public Optional<SBOM> find(Long id) {
+        return repo.findById(id);
+    }
+
+    /**
+     * Generate SBOM using Syft for system files
+     */
     @Transactional
     public SBOM generate(String name, MultipartFile[] folder, MultipartFile img) throws Exception {
-        // Save and scan the folder
+        // Save files to temp directory
         File tmpF = Files.createTempDirectory("sys").toFile();
         Map<String, String> originalPaths = new HashMap<>();
 
@@ -54,23 +71,36 @@ public class SBOMService {
             }
         }
 
-        // Collect components from pom.xml files
+        // Use Syft to scan the directory
+        List<Component> syftComponents = syftService.scanFileSystem(tmpF.getAbsolutePath());
+        log.info("Syft found {} components", syftComponents.size());
+
+        // Also use POM parser to get more detailed Maven metadata
         List<Component> pomComponents = new ArrayList<>();
         List<File> pomFiles = mavenPomParser.findPomFiles(tmpF.getAbsolutePath());
         for (File pomFile : pomFiles) {
             pomComponents.addAll(mavenPomParser.parsePomFile(pomFile));
         }
+        log.info("POM parser found {} components", pomComponents.size());
 
-        // Collect components from JAR files
-        List<Component> jarComponents = scanner.scanFileSystem(tmpF.getAbsolutePath());
-
-        // Merge components, avoiding duplicates
+        // Merge components, preferring POM metadata where available
         Map<String, Component> uniqueComponents = new HashMap<>();
-        for (Component comp : pomComponents) {
+
+        // First add Syft components
+        for (Component comp : syftComponents) {
             uniqueComponents.put(comp.getSbomRef(), comp);
         }
-        for (Component comp : jarComponents) {
-            if (!uniqueComponents.containsKey(comp.getSbomRef())) {
+
+        // Then add/update with POM components which might have better metadata
+        for (Component comp : pomComponents) {
+            Component existing = uniqueComponents.get(comp.getSbomRef());
+            if (existing != null) {
+                // Update existing component with more detailed POM metadata
+                if (existing.getLicense() == null) existing.setLicense(comp.getLicense());
+                if (existing.getVendor() == null) existing.setVendor(comp.getVendor());
+                if (existing.getHomePage() == null) existing.setHomePage(comp.getHomePage());
+                if (existing.getSourceRepo() == null) existing.setSourceRepo(comp.getSourceRepo());
+            } else {
                 uniqueComponents.put(comp.getSbomRef(), comp);
             }
         }
@@ -91,24 +121,19 @@ public class SBOMService {
             }
         }
 
-        // Enhance metadata and licenses
+        // Enhance metadata
         List<Component> finalComponents = new ArrayList<>(uniqueComponents.values());
         enhanceLicenseInfo(finalComponents);
         enrichMavenMetadata(finalComponents);
-
-        // Build dependencies
-        List<Dependency> deps = buildDependencies(finalComponents);
-
-        // Create source info
-        SourceInfo sourceInfo = new SourceInfo();
-        FileSystemInfo fsInfo = new FileSystemInfo(tmpF.getAbsolutePath(), true);
-        sourceInfo.setFilesystem(fsInfo);
 
         // Handle container image if provided
         if (img != null && !img.isEmpty()) {
             File tmpI = File.createTempFile("img", ".tar");
             img.transferTo(tmpI);
-            List<Component> imageComps = scanner.scanContainerImageFromFile(tmpI);
+
+            // Use Syft to scan the container image
+            List<Component> imageComps = syftService.scanContainerImageFromFile(tmpI);
+            log.info("Syft found {} components in container image", imageComps.size());
 
             for (Component comp : imageComps) {
                 comp.setSourceRepo("container-image");
@@ -119,21 +144,70 @@ public class SBOMService {
 
             finalComponents.addAll(imageComps);
             tmpI.delete();
+        }
 
+        // Build dependencies
+        List<Dependency> deps = buildDependencies(finalComponents);
+
+        // Create source info based on scanned sources
+        SourceInfo sourceInfo = new SourceInfo();
+        FileSystemInfo fsInfo = new FileSystemInfo(tmpF.getAbsolutePath(), true);
+        sourceInfo.setFilesystem(fsInfo);
+
+        if (img != null && !img.isEmpty()) {
             ImageInfo imgInfo = new ImageInfo(img.getOriginalFilename(), "local-upload");
             sourceInfo.setImage(imgInfo);
         }
 
         // Build SBOM object
         SBOM sb = new SBOM();
-        //手动设置ID
+        // Set ID manually
         Long maxId = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(id), 0) FROM sbom", Long.class);
         sb.setId(maxId + 1);
         sb.setName(name);
         sb.setNamespace("urn:sbom:" + UUID.randomUUID());
-        sb.setToolName("SBOMPlatform");
+        sb.setToolName("SBOMPlatform-Syft");
         sb.setToolVersion("1.0.0");
         sb.setComponents(finalComponents);
+        sb.setDependencies(deps);
+        sb.setSource(sourceInfo);
+
+        // Save to database
+        SBOM saved = repo.save(sb);
+        String json = converter.toCustomJson(saved);
+        docRepo.save(new SBOMDocument(saved.getId(), json));
+
+        return saved;
+    }
+
+    /**
+     * Generate SBOM directly for a container image
+     */
+    @Transactional
+    public SBOM generateForContainerImage(String name, String imageName) throws Exception {
+        // Use Syft to scan the container image
+        List<Component> components = syftService.scanContainerImage(imageName);
+        log.info("Syft found {} components in container image {}", components.size(), imageName);
+
+        // Enhance metadata
+        enhanceLicenseInfo(components);
+
+        // Build dependencies
+        List<Dependency> deps = buildDependencies(components);
+
+        // Create source info
+        SourceInfo sourceInfo = syftService.createSourceInfo(null, imageName, null);
+
+        // Build SBOM object
+        SBOM sb = new SBOM();
+        // Set ID manually
+        Long maxId = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(id), 0) FROM sbom", Long.class);
+        sb.setId(maxId + 1);
+        sb.setName(name);
+        sb.setNamespace("urn:sbom:" + UUID.randomUUID());
+        sb.setToolName("SBOMPlatform-Syft");
+        sb.setToolVersion("1.0.0");
+        sb.setComponents(components);
         sb.setDependencies(deps);
         sb.setSource(sourceInfo);
 
@@ -150,19 +224,18 @@ public class SBOMService {
         docRepo.deleteBySbomId(id);
         repo.deleteById(id);
 
-        // 计算当前最大 ID，并将 AUTO_INCREMENT 设为 max+1
+        // Reset auto-increment
         Integer maxId = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(MAX(id), 0) FROM sbom", Integer.class);
         int next = (maxId == null ? 1 : maxId + 1);
         jdbcTemplate.execute("ALTER TABLE sbom AUTO_INCREMENT = " + next);
     }
 
-    // 增强许可证信息
+    // Enhance license information
     private void enhanceLicenseInfo(List<Component> components) {
         for (Component comp : components) {
             if (comp.getLicense() == null) {
-                // 八大主流开源许可证
-                // 这里可以根据实际需要添加更多的许可证类型
+                // Common open source licenses
                 if (comp.getName() != null) {
                     String name = comp.getName().toLowerCase();
                     if (name.contains("apache")) {
@@ -176,18 +249,17 @@ public class SBOMService {
                     } else if (name.contains("bsd")) {
                         comp.setLicense("BSD-3-Clause");
                     }
-
                 }
             }
         }
     }
 
-    // 增强Maven元数据
+    // Enhance Maven metadata
     private void enrichMavenMetadata(List<Component> components) {
         for (Component comp : components) {
-            // 如果已有purl，解析并补充信息
+            // If PURL exists, parse and supplement information
             if (comp.getPurl() != null && comp.getPurl().startsWith("pkg:maven/")) {
-                // 示例：pkg:maven/group/artifact@version
+                // Example: pkg:maven/group/artifact@version
                 String purl = comp.getPurl();
                 String[] parts = purl.substring("pkg:maven/".length()).split("@");
                 if (parts.length == 2) {
@@ -196,12 +268,12 @@ public class SBOMService {
                         String groupId = groupArtifact[0];
                         String artifactId = groupArtifact[1];
 
-                        // 如果没有供应商，使用groupId作为供应商
+                        // Use groupId as vendor if not present
                         if (comp.getVendor() == null) {
                             comp.setVendor(groupId);
                         }
 
-                        // 如果没有主页，构造一个可能的Maven中央库链接
+                        // Construct potential Maven Central URL if homepage not present
                         if (comp.getHomePage() == null) {
                             comp.setHomePage("https://search.maven.org/artifact/" +
                                     groupId + "/" + artifactId);
@@ -212,18 +284,17 @@ public class SBOMService {
         }
     }
 
-    // 构建依赖关系
+    // Build dependency relationships
     private List<Dependency> buildDependencies(List<Component> components) {
-        // 创建一个简单的依赖图
-        // 这里简化处理，仅基于JAR文件名创建一些模拟依赖关系
+        // Create a simple dependency graph
         List<Dependency> dependencies = new ArrayList<>();
 
-        // 创建一个主系统组件作为根节点
+        // Create a root system component
         if (!components.isEmpty()) {
             Dependency rootDep = new Dependency();
             rootDep.setRef("system");
 
-            // 所有直接依赖
+            // All direct dependencies
             List<String> directDeps = new ArrayList<>();
             for (Component comp : components) {
                 directDeps.add(comp.getSbomRef());

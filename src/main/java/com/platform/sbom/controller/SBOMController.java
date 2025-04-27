@@ -20,27 +20,17 @@ public class SBOMController {
 
     private final SBOMService sbomService;
     private final SBOMConverter sbomConverter;
-    /**
-     * SBOMController 构造函数
-     *
-     * @param sbomService SBOM 服务
-     * @param sbomConverter SBOM 转换器
-     */
+
     public SBOMController(SBOMService sbomService, SBOMConverter sbomConverter) {
         this.sbomService = sbomService;
         this.sbomConverter = sbomConverter;
     }
-
-
 
     @GetMapping
     public ResponseEntity<List<SBOM>> getAllSBOMs() {
         return ResponseEntity.ok(sbomService.listAll());
     }
 
-    /**
-     * 根据 ID 获取 SBOM 详情
-     */
     @GetMapping("/{id}")
     public ResponseEntity<SBOM> getSBOMById(@PathVariable Long id) {
         return sbomService.find(id)
@@ -48,10 +38,14 @@ public class SBOMController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "SBOM not found with id: " + id));
     }
 
+    /**
+     * Generate SBOM for a file system (using Syft)
+     */
     @PostMapping("/generate/system")
     public ResponseEntity<SBOM> generateForSystem(@RequestParam String name,
                                                   @RequestParam("systemFolder") MultipartFile[] folder,
                                                   @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {
+        log.info("Generating SBOM for system: {}", name);
         SBOM sbom = sbomService.generate(name, folder, img);
         if (sbom == null) {
             return ResponseEntity.notFound().build();
@@ -59,12 +53,25 @@ public class SBOMController {
         return ResponseEntity.ok(sbom);
     }
 
+    /**
+     * Generate SBOM for a container image (using Syft)
+     */
+    @PostMapping("/generate/container")
+    public ResponseEntity<SBOM> generateForContainerImage(@RequestParam String name,
+                                                          @RequestParam String imageName) throws Exception {
+        log.info("Generating SBOM for container image: {}", imageName);
+        SBOM sbom = sbomService.generateForContainerImage(name, imageName);
+        if (sbom == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(sbom);
+    }
 
     /**
-     * 下载 SBOM JSON 文件，支持 format 参数：
-     * - spdx ：SPDX JSON
-     * - cyclonedx ：CycloneDX JSON
-     * - custom（或 blank）: 自定义统一格式
+     * Download SBOM in various formats
+     * - spdx: SPDX JSON
+     * - cyclonedx: CycloneDX JSON
+     * - custom (or blank): Custom unified format
      */
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> downloadSBOM(@PathVariable Long id,
@@ -93,13 +100,13 @@ public class SBOMController {
                     .build());
             return ResponseEntity.ok().headers(headers).body(bytes);
         } catch (Exception e) {
-            log.error("SBOM JSON 生成失败", e);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "SBOM JSON 生成失败", e);
+            log.error("SBOM JSON generation failed", e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "SBOM JSON generation failed", e);
         }
     }
 
     /**
-     * 删除指定 id 的 SBOM
+     * Delete a specific SBOM by ID
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteSBOM(@PathVariable Long id) {
