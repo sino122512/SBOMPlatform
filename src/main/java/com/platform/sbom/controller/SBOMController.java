@@ -20,7 +20,12 @@ public class SBOMController {
 
     private final SBOMService sbomService;
     private final SBOMConverter sbomConverter;
-
+    /**
+     * SBOMController 构造函数
+     *
+     * @param sbomService SBOM 服务
+     * @param sbomConverter SBOM 转换器
+     */
     public SBOMController(SBOMService sbomService, SBOMConverter sbomConverter) {
         this.sbomService = sbomService;
         this.sbomConverter = sbomConverter;
@@ -54,19 +59,6 @@ public class SBOMController {
         return ResponseEntity.ok(sbom);
     }
 
-    /**
-     * 新增：解析Maven项目并生成SBOM
-     */
-    @PostMapping("/generate/maven")
-    public ResponseEntity<SBOM> generateForMavenProject(@RequestParam String name,
-                                                        @RequestParam("mavenProject") MultipartFile[] projectFiles,
-                                                        @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {
-        SBOM sbom = sbomService.generateFromMavenProject(name, projectFiles, img);
-        if (sbom == null) {
-            return ResponseEntity.notFound().build();
-        }
-        return ResponseEntity.ok(sbom);
-    }
 
     /**
      * 下载 SBOM JSON 文件，支持 format 参数：
