@@ -20,19 +20,16 @@ import java.util.*;
 public class SBOMService {
     private final SBOMRepository repo;
     private final SBOMDocumentRepository docRepo;
-    private final ScannerService scanner;
     private final SyftService syftService;
     private final SBOMConverter converter;
     private final JdbcTemplate jdbcTemplate;
     private final MavenPomParserService mavenPomParser;
 
-    public SBOMService(SBOMRepository repo, SBOMDocumentRepository docRepo,
-                       ScannerService scanner, SyftService syftService,
+    public SBOMService(SBOMRepository repo, SBOMDocumentRepository docRepo, SyftService syftService,
                        SBOMConverter converter, JdbcTemplate jdbcTemplate,
                        MavenPomParserService mavenPomParser) {
         this.repo = repo;
         this.docRepo = docRepo;
-        this.scanner = scanner;
         this.syftService = syftService;
         this.converter = converter;
         this.jdbcTemplate = jdbcTemplate;
@@ -76,12 +73,12 @@ public class SBOMService {
         log.info("Syft found {} components", syftComponents.size());
 
         // Also use POM parser to get more detailed Maven metadata
-        List<Component> pomComponents = new ArrayList<>();
-        List<File> pomFiles = mavenPomParser.findPomFiles(tmpF.getAbsolutePath());
-        for (File pomFile : pomFiles) {
-            pomComponents.addAll(mavenPomParser.parsePomFile(pomFile));
-        }
-        log.info("POM parser found {} components", pomComponents.size());
+//        List<Component> pomComponents = new ArrayList<>();
+//        List<File> pomFiles = mavenPomParser.findPomFiles(tmpF.getAbsolutePath());
+//        for (File pomFile : pomFiles) {
+//            pomComponents.addAll(mavenPomParser.parsePomFile(pomFile));
+//        }
+//        log.info("POM parser found {} components", pomComponents.size());
 
         // Merge components, preferring POM metadata where available
         Map<String, Component> uniqueComponents = new HashMap<>();
@@ -92,18 +89,18 @@ public class SBOMService {
         }
 
         // Then add/update with POM components which might have better metadata
-        for (Component comp : pomComponents) {
-            Component existing = uniqueComponents.get(comp.getSbomRef());
-            if (existing != null) {
-                // Update existing component with more detailed POM metadata
-                if (existing.getLicense() == null) existing.setLicense(comp.getLicense());
-                if (existing.getVendor() == null) existing.setVendor(comp.getVendor());
-                if (existing.getHomePage() == null) existing.setHomePage(comp.getHomePage());
-                if (existing.getSourceRepo() == null) existing.setSourceRepo(comp.getSourceRepo());
-            } else {
-                uniqueComponents.put(comp.getSbomRef(), comp);
-            }
-        }
+//        for (Component comp : pomComponents) {
+//            Component existing = uniqueComponents.get(comp.getSbomRef());
+//            if (existing != null) {
+//                // Update existing component with more detailed POM metadata
+//                if (existing.getLicense() == null) existing.setLicense(comp.getLicense());
+//                if (existing.getVendor() == null) existing.setVendor(comp.getVendor());
+//                if (existing.getHomePage() == null) existing.setHomePage(comp.getHomePage());
+//                if (existing.getSourceRepo() == null) existing.setSourceRepo(comp.getSourceRepo());
+//            } else {
+//                uniqueComponents.put(comp.getSbomRef(), comp);
+//            }
+//        }
 
         // Replace temporary paths with original paths
         for (Component comp : uniqueComponents.values()) {

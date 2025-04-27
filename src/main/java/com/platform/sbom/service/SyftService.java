@@ -22,7 +22,7 @@ public class SyftService {
 
     private final ObjectMapper objectMapper;
 
-    @Value("${syft.path:/usr/local/bin/syft}")
+    @Value("${syft.path:C:/Users/12135/scoop/apps/syft/current/syft.exe}")
     private String syftPath;
 
     public SyftService(ObjectMapper objectMapper) {
