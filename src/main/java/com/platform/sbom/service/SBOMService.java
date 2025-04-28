@@ -120,8 +120,9 @@ public class SBOMService {
 
         // Enhance metadata
         List<Component> finalComponents = new ArrayList<>(uniqueComponents.values());
-        enhanceLicenseInfo(finalComponents);
+        //enhanceLicenseInfo(finalComponents);
         enrichMavenMetadata(finalComponents);
+        enhanceCpeInfo(finalComponents); // 新增对 CPE 的处理
 
         // Handle container image if provided
         if (img != null && !img.isEmpty()) {
@@ -187,7 +188,7 @@ public class SBOMService {
         log.info("Syft found {} components in container image {}", components.size(), imageName);
 
         // Enhance metadata
-        enhanceLicenseInfo(components);
+        //enhanceLicenseInfo(components);
 
         // Build dependencies
         List<Dependency> deps = buildDependencies(components);
@@ -229,27 +230,27 @@ public class SBOMService {
     }
 
     // Enhance license information
-    private void enhanceLicenseInfo(List<Component> components) {
-        for (Component comp : components) {
-            if (comp.getLicense() == null) {
-                // Common open source licenses
-                if (comp.getName() != null) {
-                    String name = comp.getName().toLowerCase();
-                    if (name.contains("apache")) {
-                        comp.setLicense("Apache-2.0");
-                    } else if (name.contains("mit")) {
-                        comp.setLicense("MIT");
-                    } else if (name.contains("gpl")) {
-                        comp.setLicense("GPL-3.0");
-                    } else if (name.contains("lgpl")) {
-                        comp.setLicense("LGPL-3.0");
-                    } else if (name.contains("bsd")) {
-                        comp.setLicense("BSD-3-Clause");
-                    }
-                }
-            }
-        }
-    }
+//    private void enhanceLicenseInfo(List<Component> components) {
+//        for (Component comp : components) {
+//            if (comp.getLicense() == null) {
+//                // Common open source licenses
+//                if (comp.getName() != null) {
+//                    String name = comp.getName().toLowerCase();
+//                    if (name.contains("apache")) {
+//                        comp.setLicense("Apache-2.0");
+//                    } else if (name.contains("mit")) {
+//                        comp.setLicense("MIT");
+//                    } else if (name.contains("gpl")) {
+//                        comp.setLicense("GPL-3.0");
+//                    } else if (name.contains("lgpl")) {
+//                        comp.setLicense("LGPL-3.0");
+//                    } else if (name.contains("bsd")) {
+//                        comp.setLicense("BSD-3-Clause");
+//                    }
+//                }
+//            }
+//        }
+//    }
 
     // Enhance Maven metadata
     private void enrichMavenMetadata(List<Component> components) {
@@ -276,6 +277,32 @@ public class SBOMService {
                                     groupId + "/" + artifactId);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // 添加 enhanceCpeInfo 方法
+    private void enhanceCpeInfo(List<Component> components) {
+        for (Component comp : components) {
+            if (comp.getCpe() == null || comp.getCpe().isEmpty()) {
+                if (comp.getPurl() != null) {
+                    // 假设 PURL 格式为 pkg:type/group/name@version
+                    String purl = comp.getPurl();
+                    String[] parts = purl.split(":");
+                    if (parts.length > 2) {
+                        String[] groupName = parts[2].split("/");
+                        if (groupName.length > 1) {
+                            String vendor = groupName[0];
+                            String product = groupName[1];
+                            String version = comp.getVersion() != null ? comp.getVersion() : "unknown";
+                            // 生成 CPE 字段
+                            comp.setCpe(String.format("cpe:2.3:a:%s:%s:%s:*:*:*:*:*:*:*", vendor, product, version));
+                        }
+                    }
+                } else {
+                    // 如果 PURL 缺失，设置默认值或提示
+                    comp.setCpe("UNKNOWN");
                 }
             }
         }

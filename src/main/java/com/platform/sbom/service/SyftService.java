@@ -146,6 +146,8 @@ public class SyftService {
                     JsonNode licenses = artifact.path("licenses");
                     if (licenses != null && licenses.isArray() && licenses.size() > 0) {
                         component.setLicense(licenses.get(0).asText());
+                    } else {
+                        component.setLicense("NOASSERTION"); // Fallback value
                     }
 
                     // Extract PURL if available
@@ -154,10 +156,13 @@ public class SyftService {
                         component.setPurl(purl.asText());
                     }
 
+
                     // Extract CPE if available
                     JsonNode cpes = artifact.path("cpes");
                     if (cpes != null && cpes.isArray() && cpes.size() > 0) {
                         component.setCpe(cpes.get(0).asText());
+                    } else {
+                        component.setCpe("NOASSERTION"); // Fallback value
                     }
 
                     // Set metadata based on source
