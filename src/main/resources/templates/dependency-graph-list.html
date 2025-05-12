@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SBOM依赖图列表</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <style>
+        .card {
+            transition: transform 0.3s;
+            margin-bottom: 20px;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">SBOM依赖图列表</h1>
+        
+        <div class="row">
+            <div th:if="${sboms.empty}" class="col-12">
+                <div class="alert alert-warning">
+                    没有找到SBOM数据。请先生成或上传SBOM。
+                </div>
+            </div>
+            
+            <div th:each="sbom : ${sboms}" class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title" th:text="${sbom.name}">SBOM名称</h5>
+                        <p class="card-text">
+                            <span class="badge bg-primary" th:text="${sbom.components.size()} + ' 组件'">100 组件</span>
+                            <span class="badge bg-success" th:text="${sbom.dependencies.size()} + ' 依赖关系'">50 依赖关系</span>
+                        </p>
+                        <p class="card-text">
+                            <small class="text-muted" th:text="'创建于 ' + ${#temporals.format(sbom.timestamp, 'yyyy-MM-dd HH:mm')}">创建时间</small>
+                        </p>
+                        <a th:href="@{/dependency-graph/{id}(id=${sbom.id})}" class="btn btn-primary">查看依赖图</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 

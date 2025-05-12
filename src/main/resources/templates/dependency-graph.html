@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${sbom.name} + ' - 依赖图'">SBOM依赖图</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+    <style>
+        #graph-container {
+            width: 100%;
+            height: 800px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .node {
+            cursor: pointer;
+        }
+        
+        .node rect {
+            stroke: #333;
+            fill: #fff;
+            stroke-width: 1.5px;
+        }
+        
+        .node.component rect {
+            fill: #e1f5fe;
+        }
+        
+        /* 系统根节点样式 */
+        .system-node circle {
+            fill: #ffd54f !important;
+            stroke: #ff6f00 !important;
+            stroke-width: 2px !important;
+        }
+        
+        .node text {
+            font-size: 12px;
+            font-family: sans-serif;
+        }
+        
+        .edgePath path {
+            stroke: #333;
+            stroke-width: 1.5px;
+            fill: none;
+        }
+        
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            z-index: 10;
+        }
+        
+        .component-details {
+            position: fixed;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            z-index: 100;
+            max-width: 400px;
+            display: none;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transition: opacity 0.2s ease;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .component-details.visible {
+            display: block;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h1 th:text="${sbom.name} + ' - 组件依赖图'">SBOM依赖图</h1>
+            <a th:href="@{/dependency-graph}" class="btn btn-secondary">返回列表</a>
+        </div>
+        
+        <div class="row">
+            <div class="col-12">
+                <div id="graph-container">
+                    <div class="control-panel">
+                        <div class="mb-2">
+                            <label for="zoom-slider" class="form-label">缩放</label>
+                            <input type="range" class="form-range" id="zoom-slider" min="0.1" max="2" step="0.1" value="1">
+                        </div>
+                        <div class="mb-2">
+                            <button id="reset-zoom" class="btn btn-sm btn-secondary">重置视图</button>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="show-labels" checked>
+                            <label class="form-check-label" for="show-labels">
+                                显示标签
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="component-details" id="component-details">
+                        <h5 id="component-name">组件名称</h5>
+                        <div id="component-info">
+                            <p><strong>版本：</strong> <span id="component-version"></span></p>
+                            <p><strong>类型：</strong> <span id="component-type"></span></p>
+                            <p><strong>许可证：</strong> <span id="component-license"></span></p>
+                            <p><strong>PURL：</strong> <span id="component-purl"></span></p>
+                        </div>
+                    </div>
+                    
+                    <svg id="graph"></svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script th:inline="javascript">
+    /*<![CDATA[*/
+    document.addEventListener('DOMContentLoaded', function() {
+        const sbomId = /*[[${sbom.id}]]*/ null;
+        console.log("正在加载SBOM ID:", sbomId);
+        
+        // 获取依赖图数据
+        fetch(`/dependency-graph/${sbomId}/data`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('数据加载失败: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log("获取到的依赖图数据:", data);
+                if (!data.nodes || data.nodes.length === 0) {
+                    document.getElementById('graph-container').innerHTML = 
+                        '<div class="alert alert-warning m-5">没有找到可用的依赖数据</div>';
+                    return;
+                }
+                renderGraph(data);
+            })
+            .catch(error => {
+                console.error('获取图数据错误:', error);
+                document.getElementById('graph-container').innerHTML = 
+                    `<div class="alert alert-danger m-5">加载依赖图数据失败: ${error.message}</div>`;
+            });
+        
+        function renderGraph(data) {
+            const width = document.getElementById('graph-container').clientWidth;
+            const height = document.getElementById('graph-container').clientHeight;
+            
+            console.log("开始渲染依赖图, 节点数:", data.nodes.length, "连接数:", data.links.length);
+            
+            // 创建D3力导向图
+            const svg = d3.select("#graph")
+                .attr("width", width)
+                .attr("height", height);
+            
+            // 创建缩放行为
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 2])
+                .on("zoom", (event) => {
+                    g.attr("transform", event.transform);
+                });
+            
+            svg.call(zoom);
+            
+            const g = svg.append("g");
+            
+            // 确保节点有默认坐标
+            data.nodes.forEach((node, i) => {
+                if (!node.x) node.x = width / 2 + 100 * Math.cos(2 * Math.PI * i / data.nodes.length);
+                if (!node.y) node.y = height / 2 + 100 * Math.sin(2 * Math.PI * i / data.nodes.length);
+            });
+            
+            // 创建力导向模拟
+            const simulation = d3.forceSimulation(data.nodes)
+                .force("link", d3.forceLink(data.links).id(d => d.id).distance(150))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide(60));
+                
+            // 绘制连接线
+            const link = g.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(data.links)
+                .enter().append("line")
+                .attr("class", "edgePath")
+                .attr("stroke", "#999")
+                .attr("stroke-width", 1.5);
+            
+            // 创建节点组
+            const node = g.append("g")
+                .attr("class", "nodes")
+                .selectAll("g")
+                .data(data.nodes)
+                .enter().append("g")
+                .attr("class", d => d.type === "root" ? "node component system-node" : "node component")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+            
+            // 为节点添加圆形
+            node.append("circle")
+                .attr("r", 20)
+                .attr("fill", "#e1f5fe")
+                .attr("stroke", "#333")
+                .attr("stroke-width", 1.5);
+            
+            // 为节点添加文本标签
+            node.append("text")
+                .attr("dy", 30)
+                .attr("text-anchor", "middle")
+                .text(d => d.name)
+                .attr("class", "node-label")
+                .attr("font-size", "10px");
+            
+            // 添加点击事件以显示详细信息
+            node.on("click", function(event, d) {
+                event.preventDefault();
+                event.stopPropagation();
+                console.log("点击节点:", d);
+                showComponentDetails(d, event);
+            });
+            
+            // 在空白处点击时隐藏详细信息
+            svg.on("click", function(event) {
+                event.preventDefault();
+                hideComponentDetails();
+            });
+            
+            // 设置模拟的tick事件处理函数
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+                
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+            
+            // 拖拽函数
+            function dragstarted(event, d) {
+                event.sourceEvent.stopPropagation();
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+            
+            // 显示组件详细信息
+            function showComponentDetails(component, event) {
+                // 先隐藏详情面板，防止过渡动画导致页面跳动
+                const detailsPanel = document.getElementById('component-details');
+                detailsPanel.style.opacity = '0';
+                
+                // 计算面板位置，跟随鼠标但避免超出视窗
+                const mouseX = event ? event.pageX : window.innerWidth / 2;
+                const mouseY = event ? event.pageY : window.innerHeight / 2;
+                
+                // 设置位置，避免超出屏幕边缘
+                const panelWidth = 400; // 最大宽度
+                const panelHeight = 200; // 估计高度
+                const margin = 20;
+                
+                let left = mouseX + margin;
+                let top = mouseY - panelHeight / 2;
+                
+                // 避免超出右边缘
+                if (left + panelWidth > window.innerWidth) {
+                    left = mouseX - panelWidth - margin;
+                }
+                
+                // 避免超出上下边缘
+                if (top < margin) {
+                    top = margin;
+                } else if (top + panelHeight > window.innerHeight - margin) {
+                    top = window.innerHeight - panelHeight - margin;
+                }
+                
+                detailsPanel.style.left = left + 'px';
+                detailsPanel.style.top = top + 'px';
+                
+                // 更新信息内容
+                document.getElementById('component-name').textContent = component.name;
+                document.getElementById('component-version').textContent = component.version || '未知';
+                document.getElementById('component-type').textContent = component.type || '未知';
+                document.getElementById('component-license').textContent = component.license || '未知';
+                document.getElementById('component-purl').textContent = component.purl || '未知';
+                
+                // 延迟显示详情面板，确保DOM更新完成
+                setTimeout(() => {
+                    detailsPanel.style.display = 'block';
+                    // 强制重绘
+                    detailsPanel.offsetHeight;
+                    // 显示面板
+                    detailsPanel.style.opacity = '1';
+                }, 10);
+            }
+            
+            // 隐藏组件详细信息
+            function hideComponentDetails() {
+                const detailsPanel = document.getElementById('component-details');
+                detailsPanel.style.opacity = '0';
+                // 等待淡出动画完成后隐藏
+                setTimeout(() => {
+                    detailsPanel.style.display = 'none';
+                }, 300);
+            }
+            
+            // 缩放控制
+            document.getElementById('zoom-slider').addEventListener('input', function(event) {
+                const scale = parseFloat(event.target.value);
+                svg.call(zoom.transform, d3.zoomIdentity.scale(scale));
+            });
+            
+            // 重置视图
+            document.getElementById('reset-zoom').addEventListener('click', function() {
+                svg.call(zoom.transform, d3.zoomIdentity);
+                document.getElementById('zoom-slider').value = 1;
+            });
+            
+            // 显示/隐藏标签
+            document.getElementById('show-labels').addEventListener('change', function(event) {
+                if (event.target.checked) {
+                    d3.selectAll('.node-label').style('display', 'block');
+                } else {
+                    d3.selectAll('.node-label').style('display', 'none');
+                }
+            });
+        }
+    });
+    /*]]>*/
+    </script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
