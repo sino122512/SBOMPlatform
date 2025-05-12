@@ -19,7 +19,6 @@ public class Component {
     private String cpe;
 
     // 新增元数据字段
-    private String filePath;       // 文件路径
     private String sourceRepo;     // 包来源
     private String vendor;         // 供应商
     private String homePage;       // 主页
@@ -91,14 +90,6 @@ public class Component {
 
     public void setCpe(String cpe) {
         this.cpe = cpe;
-    }
-
-    public String getFilePath() {
-        return filePath;
-    }
-
-    public void setFilePath(String filePath) {
-        this.filePath = filePath;
     }
 
     public String getSourceRepo() {

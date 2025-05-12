@@ -2,10 +2,7 @@ package com.platform.sbom.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.platform.sbom.model.Component;
-import com.platform.sbom.model.FileSystemInfo;
-import com.platform.sbom.model.ImageInfo;
-import com.platform.sbom.model.SourceInfo;
+import com.platform.sbom.model.*;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -13,8 +10,12 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Log4j2
 @Service
@@ -30,142 +31,227 @@ public class SyftService {
     }
 
     /**
-     * Generate SBOM for a file system directory using Syft
+     * 使用Syft生成SBOM并扫描文件系统目录 (SPDX格式)
      *
-     * @param directory The directory to scan
-     * @return List of components found
+     * @param directory 要扫描的目录
+     * @return 包含组件和依赖关系的结果Map
      */
-    public List<Component> scanFileSystem(String directory) {
-        return runSyftScan(directory, null);
+    public Map<String, Object> scanFileSystemSPDX(String directory) {
+        return runSyftScan(directory, null, "spdx-json");
     }
 
     /**
-     * Generate SBOM for a container image using Syft
+     * 使用Syft生成SBOM并扫描容器镜像 (SPDX格式)
      *
-     * @param imageName The image name to scan (e.g., alpine:latest)
-     * @return List of components found
+     * @param imageName 要扫描的镜像名称（例如，alpine:latest）
+     * @return 包含组件和依赖关系的结果Map
      */
-    public List<Component> scanContainerImage(String imageName) {
-        return runSyftScan(null, imageName);
+    public Map<String, Object> scanContainerImageSPDX(String imageName) {
+        return runSyftScan(null, imageName, "spdx-json");
     }
 
     /**
-     * Generate SBOM from a container image tar file using Syft
+     * 使用Syft从容器镜像tar文件生成SBOM (SPDX格式)
      *
-     * @param imageFile The tar file containing the container image
-     * @return List of components found
+     * @param imageFile 包含容器镜像的tar文件
+     * @return 包含组件和依赖关系的结果Map
      */
-    public List<Component> scanContainerImageFromFile(File imageFile) {
-        return runSyftScan("docker-archive:" + imageFile.getAbsolutePath(), null);
+    public Map<String, Object> scanContainerImageFromFileSPDX(File imageFile) {
+        return runSyftScan("docker-archive:" + imageFile.getAbsolutePath(), null, "spdx-json");
     }
 
     /**
-     * Execute Syft and parse the output
+     * 使用Syft生成SBOM并扫描文件系统目录 (CycloneDX格式)
      *
-     * @param source     Directory path, docker-archive path, or null
-     * @param imageName  Container image name or null
-     * @return List of components found
+     * @param directory 要扫描的目录
+     * @return 包含组件和依赖关系的结果Map
      */
-    private List<Component> runSyftScan(String source, String imageName) {
+    public Map<String, Object> scanFileSystemCycloneDX(String directory) {
+        return runSyftScan(directory, null, "cyclonedx-json");
+    }
+
+    /**
+     * 使用Syft生成SBOM并扫描容器镜像 (CycloneDX格式)
+     *
+     * @param imageName 要扫描的镜像名称（例如，alpine:latest）
+     * @return 包含组件和依赖关系的结果Map
+     */
+    public Map<String, Object> scanContainerImageCycloneDX(String imageName) {
+        return runSyftScan(null, imageName, "cyclonedx-json");
+    }
+
+    /**
+     * 使用Syft从容器镜像tar文件生成SBOM (CycloneDX格式)
+     *
+     * @param imageFile 包含容器镜像的tar文件
+     * @return 包含组件和依赖关系的结果Map
+     */
+    public Map<String, Object> scanContainerImageFromFileCycloneDX(File imageFile) {
+        return runSyftScan("docker-archive:" + imageFile.getAbsolutePath(), null, "cyclonedx-json");
+    }
+
+    /**
+     * 执行Syft并生成指定格式的SBOM，然后解析组件和依赖关系
+     *
+     * @param source 目录路径、docker-archive路径或null
+     * @param imageName 容器镜像名称或null
+     * @param format SBOM格式，支持 "spdx-json" 或 "cyclonedx-json"
+     * @return 包含组件列表和依赖关系列表的Map
+     */
+    private Map<String, Object> runSyftScan(String source, String imageName, String format) {
+        Map<String, Object> result = new HashMap<>();
         List<Component> components = new ArrayList<>();
+        List<Dependency> dependencies = new ArrayList<>();
+        String sbomFormat = format.toLowerCase();
+        
         try {
+            // 创建临时文件用于存储JSON输出
+            Path tempFile = Files.createTempFile("syft-" + sbomFormat + "-", ".json");
+            
             ProcessBuilder pb = new ProcessBuilder();
             List<String> command = new ArrayList<>();
             command.add(syftPath);
             command.add("packages");
 
-            // Set the source (directory, image, or archive)
+            // 设置源（目录、镜像或存档）
             if (source != null) {
                 command.add(source);
             } else if (imageName != null) {
                 command.add(imageName);
             }
 
-            // Output in JSON format
+            // 输出为指定JSON格式并保存到临时文件
             command.add("-o");
-            command.add("json");
+            command.add(sbomFormat);
+            command.add("--file");
+            command.add(tempFile.toString());
 
-            log.info("Running Syft command: {}", String.join(" ", command));
+            log.info("执行Syft命令生成 {}: {}", sbomFormat, String.join(" ", command));
             pb.command(command);
 
             Process process = pb.start();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            StringBuilder output = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-            }
-
             int exitCode = process.waitFor();
+            
             if (exitCode == 0) {
-                // Parse Syft JSON output
-                components = parseSyftOutput(output.toString(), source, imageName);
+                // 读取JSON文件
+                String sbomJson = Files.readString(tempFile);
+                
+                // 根据格式解析JSON，提取组件和依赖关系
+                Map<String, Object> parsedData;
+                if (sbomFormat.startsWith("spdx")) {
+                    parsedData = parseSPDXOutput(sbomJson, source, imageName);
+                } else if (sbomFormat.startsWith("cyclonedx")) {
+                    parsedData = parseCycloneDXOutput(sbomJson, source, imageName);
+                } else {
+                    throw new IllegalArgumentException("不支持的SBOM格式: " + sbomFormat);
+                }
+                
+                components = (List<Component>) parsedData.get("components");
+                dependencies = (List<Dependency>) parsedData.get("dependencies");
+                
+                log.info("成功从{}解析出 {} 个组件和 {} 个依赖关系", 
+                        sbomFormat, components.size(), dependencies.size());
             } else {
-                log.error("Syft execution failed with exit code: {}", exitCode);
+                log.error("Syft执行失败，退出代码: {}", exitCode);
                 BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
                 StringBuilder errorOutput = new StringBuilder();
+                String line;
                 while ((line = errorReader.readLine()) != null) {
                     errorOutput.append(line).append("\n");
                 }
-                log.error("Syft error: {}", errorOutput.toString());
+                log.error("Syft错误: {}", errorOutput.toString());
             }
+            
+            // 清理临时文件
+            Files.deleteIfExists(tempFile);
+            
         } catch (Exception e) {
-            log.error("Error executing Syft", e);
+            log.error("执行Syft时出错", e);
         }
-        return components;
+        
+        result.put("components", components);
+        result.put("dependencies", dependencies);
+        return result;
     }
 
     /**
-     * Parse Syft JSON output into Component objects
+     * 解析SPDX JSON输出为组件对象和依赖关系
      *
-     * @param json       The JSON output from Syft
-     * @param source     The source that was scanned
-     * @param imageName  The image name that was scanned
-     * @return List of components
+     * @param json SPDX JSON输出
+     * @param source 被扫描的源
+     * @param imageName 被扫描的镜像名称
+     * @return 包含组件列表和依赖关系列表的Map
      */
-    private List<Component> parseSyftOutput(String json, String source, String imageName) {
+    private Map<String, Object> parseSPDXOutput(String json, String source, String imageName) {
         List<Component> components = new ArrayList<>();
+        List<Dependency> dependencies = new ArrayList<>();
+        Map<String, Component> componentMap = new HashMap<>();
+        
         try {
             JsonNode root = objectMapper.readTree(json);
-            JsonNode artifacts = root.get("artifacts");
-
-            if (artifacts != null && artifacts.isArray()) {
-                for (JsonNode artifact : artifacts) {
+            
+            // 解析SPDX文档信息
+            String documentName = root.path("name").asText("Unknown SBOM");
+            log.info("解析SPDX文档: {}", documentName);
+            
+            // 解析包描述
+            JsonNode packages = root.path("packages");
+            if (packages != null && packages.isArray()) {
+                for (JsonNode pkg : packages) {
+                    // 跳过文档自身包
+                    if (pkg.path("SPDXID").asText().equals("SPDXRef-DOCUMENT")) {
+                        continue;
+                    }
+                    
                     Component component = new Component();
-
-                    // Extract basic component info
-                    component.setName(artifact.path("name").asText(""));
-                    component.setVersion(artifact.path("version").asText(""));
-                    component.setType(artifact.path("type").asText(""));
-
-                    // Generate a unique SBOM reference
-                    String sbomRef = "pkg:" + component.getType() + "/" + component.getName() + "@" + component.getVersion();
-                    component.setSbomRef(sbomRef);
-
-                    // Extract licenses
-                    JsonNode licenses = artifact.path("licenses");
-                    if (licenses != null && licenses.isArray() && licenses.size() > 0) {
-                        component.setLicense(licenses.get(0).asText());
-                    } else {
-                        component.setLicense("NOASSERTION"); // Fallback value
+                    
+                    // 提取包ID (SPDXID)
+                    String spdxId = pkg.path("SPDXID").asText("").replace("SPDXRef-", "");
+                    component.setSbomRef(spdxId);
+                    
+                    // 提取基本组件信息
+                    component.setName(pkg.path("name").asText(""));
+                    component.setVersion(pkg.path("versionInfo").asText(""));
+                    
+                    // 提取供应商
+                    component.setVendor(pkg.path("supplier").asText(""));
+                    
+                    // 提取许可证
+                    String licenseConcluded = pkg.path("licenseConcluded").asText("");
+                    String licenseDeclared = pkg.path("licenseDeclared").asText("");
+                    component.setLicense(!licenseConcluded.isEmpty() ? licenseConcluded : 
+                                        (!licenseDeclared.isEmpty() ? licenseDeclared : "UNKNOWN"));
+                    
+                    // 提取描述
+                    component.setDescription(pkg.path("description").asText(""));
+                    
+                    // 提取类型
+                    component.setType(pkg.path("primaryPackagePurpose").asText("LIBRARY"));
+                    
+                    // 提取PURL
+                    JsonNode externalRefs = pkg.path("externalRefs");
+                    if (externalRefs != null && externalRefs.isArray()) {
+                        for (JsonNode ref : externalRefs) {
+                            String refType = ref.path("referenceType").asText("");
+                            if (refType.equals("purl")) {
+                                component.setPurl(ref.path("referenceLocator").asText(""));
+                                break;
+                            }
+                        }
                     }
-
-                    // Extract PURL if available
-                    JsonNode purl = artifact.path("purl");
-                    if (purl != null && !purl.isMissingNode()) {
-                        component.setPurl(purl.asText());
+                    
+                    // 提取CPE
+                    if (externalRefs != null && externalRefs.isArray()) {
+                        for (JsonNode ref : externalRefs) {
+                            String refType = ref.path("referenceType").asText("");
+                            if (refType.equals("cpe23Type") || refType.equals("cpe22Type")) {
+                                component.setCpe(ref.path("referenceLocator").asText(""));
+                                break;
+                            }
+                        }
                     }
-
-
-                    // Extract CPE if available
-                    JsonNode cpes = artifact.path("cpes");
-                    if (cpes != null && cpes.isArray() && cpes.size() > 0) {
-                        component.setCpe(cpes.get(0).asText());
-                    } else {
-                        component.setCpe("NOASSERTION"); // Fallback value
-                    }
-
-                    // Set metadata based on source
+                    
+                    // 设置基于源的元数据
                     if (imageName != null) {
                         component.setSourceRepo("container-image:" + imageName);
                     } else if (source != null) {
@@ -173,22 +259,225 @@ public class SyftService {
                             component.setSourceRepo("container-image-archive");
                         } else {
                             component.setSourceRepo("filesystem:" + source);
-
-                            // Extract file path if available
-                            JsonNode locations = artifact.path("locations");
-                            if (locations != null && locations.isArray() && locations.size() > 0) {
-                                component.setFilePath(locations.get(0).path("path").asText());
-                            }
                         }
                     }
-
+                    
                     components.add(component);
+                    componentMap.put(spdxId, component);
+
+                    // 如果没有找到许可证信息，设置默认值
+                    if (component.getLicense() == null || component.getLicense().isEmpty()) {
+                        component.setLicense("UNKNOWN");
+                    }
                 }
             }
+            
+            // 解析依赖关系
+            JsonNode relationships = root.path("relationships");
+            if (relationships != null && relationships.isArray()) {
+                for (JsonNode rel : relationships) {
+                    String relationType = rel.path("relationshipType").asText("");
+                    
+                    // 仅处理DEPENDS_ON关系
+                    if (relationType.equals("DEPENDS_ON")) {
+                        String sourceId = rel.path("spdxElementId").asText("").replace("SPDXRef-", "");
+                        String targetId = rel.path("relatedSpdxElement").asText("").replace("SPDXRef-", "");
+                        
+                        // 检查是否已存在此源的依赖关系
+                        Dependency existingDep = null;
+                        for (Dependency dep : dependencies) {
+                            if (dep.getRef().equals(sourceId)) {
+                                existingDep = dep;
+                                break;
+                            }
+                        }
+                        
+                        if (existingDep == null) {
+                            // 创建新的依赖关系
+                            Dependency dep = new Dependency();
+                            dep.setRef(sourceId);
+                            List<String> dependsOn = new ArrayList<>();
+                            dependsOn.add(targetId);
+                            dep.setDependsOn(dependsOn);
+                            dependencies.add(dep);
+                        } else {
+                            // 向现有依赖关系添加目标
+                            existingDep.getDependsOn().add(targetId);
+                        }
+                    }
+                }
+            }
+            
+            // 如果没有找到依赖关系，创建基于组件的简单依赖树
+            if (dependencies.isEmpty() && !components.isEmpty()) {
+                log.info("未找到依赖关系，创建系统级依赖树");
+                Dependency rootDep = new Dependency();
+                rootDep.setRef("system");
+                
+                List<String> allComponents = new ArrayList<>();
+                for (Component comp : components) {
+                    allComponents.add(comp.getSbomRef());
+                }
+                
+                rootDep.setDependsOn(allComponents);
+                dependencies.add(rootDep);
+            }
+            
         } catch (Exception e) {
-            log.error("Error parsing Syft output", e);
+            log.error("解析SPDX输出时出错", e);
         }
-        return components;
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("components", components);
+        result.put("dependencies", dependencies);
+        return result;
+    }
+
+    /**
+     * 解析CycloneDX JSON输出为组件对象和依赖关系
+     *
+     * @param json CycloneDX JSON输出
+     * @param source 被扫描的源
+     * @param imageName 被扫描的镜像名称
+     * @return 包含组件列表和依赖关系列表的Map
+     */
+    private Map<String, Object> parseCycloneDXOutput(String json, String source, String imageName) {
+        List<Component> components = new ArrayList<>();
+        List<Dependency> dependencies = new ArrayList<>();
+        Map<String, Component> componentMap = new HashMap<>();
+        
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            
+            // 解析CycloneDX元数据
+            JsonNode metadata = root.path("metadata");
+            String documentName = metadata.path("component").path("name").asText("Unknown SBOM");
+            log.info("解析CycloneDX文档: {}", documentName);
+            
+            // 解析组件
+            JsonNode cdxComponents = root.path("components");
+            if (cdxComponents != null && cdxComponents.isArray()) {
+                for (JsonNode cdxComp : cdxComponents) {
+                    Component component = new Component();
+                    
+                    // 提取基本组件信息
+                    component.setName(cdxComp.path("name").asText(""));
+                    component.setVersion(cdxComp.path("version").asText(""));
+                    
+                    // 提取类型
+                    component.setType(cdxComp.path("type").asText(""));
+                    
+                    // 提取BOM引用ID
+                    String bomRef = cdxComp.path("bom-ref").asText("");
+                    if (bomRef.isEmpty()) {
+                        // 如果没有bom-ref, 生成一个基于类型/名称/版本的ID
+                        bomRef = "pkg:" + component.getType() + "/" + component.getName() + "@" + component.getVersion();
+                    }
+                    component.setSbomRef(bomRef);
+                    
+                    // 提取供应商
+                    JsonNode supplier = cdxComp.path("publisher");
+                    if (!supplier.isMissingNode()) {
+                        component.setVendor(supplier.asText(""));
+                    }
+                    
+                    // 提取许可证
+                    JsonNode licenses = cdxComp.path("licenses");
+                    if (licenses != null && licenses.isArray() && licenses.size() > 0) {
+                        JsonNode license = licenses.get(0);
+                        if (license.has("license")) {
+                            JsonNode licenseData = license.path("license");
+                            if (licenseData.has("id")) {
+                                component.setLicense(licenseData.path("id").asText(""));
+                            } else if (licenseData.has("name")) {
+                                component.setLicense(licenseData.path("name").asText(""));
+                            }
+                        } else if (license.has("expression")) {
+                            component.setLicense(license.path("expression").asText(""));
+                        }
+                    }
+                    
+                    // 提取描述
+                    component.setDescription(cdxComp.path("description").asText(""));
+                    
+                    // 提取PURL
+                    JsonNode purl = cdxComp.path("purl");
+                    if (!purl.isMissingNode()) {
+                        component.setPurl(purl.asText(""));
+                    }
+                    
+                    // 提取CPE
+                    JsonNode cpe = cdxComp.path("cpe");
+                    if (!cpe.isMissingNode()) {
+                        component.setCpe(cpe.asText(""));
+                    }
+                    
+                    // 设置基于源的元数据
+                    if (imageName != null) {
+                        component.setSourceRepo("container-image:" + imageName);
+                    } else if (source != null) {
+                        if (source.startsWith("docker-archive:")) {
+                            component.setSourceRepo("container-image-archive");
+                        } else {
+                            component.setSourceRepo("filesystem:" + source);
+                        }
+                    }
+                    
+                    components.add(component);
+                    componentMap.put(bomRef, component);
+
+                    // 如果没有找到许可证信息，设置默认值
+                    if (component.getLicense() == null || component.getLicense().isEmpty()) {
+                        component.setLicense("UNKNOWN");
+                    }
+                }
+            }
+            
+            // 解析依赖关系
+            JsonNode cdxDependencies = root.path("dependencies");
+            if (cdxDependencies != null && cdxDependencies.isArray()) {
+                for (JsonNode cdxDep : cdxDependencies) {
+                    String ref = cdxDep.path("ref").asText("");
+                    JsonNode dependsOn = cdxDep.path("dependsOn");
+                    
+                    if (!ref.isEmpty() && dependsOn != null && dependsOn.isArray() && dependsOn.size() > 0) {
+                        Dependency dep = new Dependency();
+                        dep.setRef(ref);
+                        
+                        List<String> deps = new ArrayList<>();
+                        for (JsonNode target : dependsOn) {
+                            deps.add(target.asText());
+                        }
+                        
+                        dep.setDependsOn(deps);
+                        dependencies.add(dep);
+                    }
+                }
+            }
+            
+            // 如果没有找到依赖关系，创建基于组件的简单依赖树
+            if (dependencies.isEmpty() && !components.isEmpty()) {
+                log.info("未找到依赖关系，创建系统级依赖树");
+                Dependency rootDep = new Dependency();
+                rootDep.setRef("system");
+                
+                List<String> allComponents = new ArrayList<>();
+                for (Component comp : components) {
+                    allComponents.add(comp.getSbomRef());
+                }
+                
+                rootDep.setDependsOn(allComponents);
+                dependencies.add(rootDep);
+            }
+            
+        } catch (Exception e) {
+            log.error("解析CycloneDX输出时出错", e);
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("components", components);
+        result.put("dependencies", dependencies);
+        return result;
     }
 
     /**
@@ -208,10 +497,10 @@ public class SyftService {
         }
 
         if (imageName != null) {
-            ImageInfo imgInfo = new ImageInfo(imageName, "docker");
+            ImageInfo imgInfo = new ImageInfo(imageName, "registry");
             sourceInfo.setImage(imgInfo);
         } else if (imageFile != null) {
-            ImageInfo imgInfo = new ImageInfo(imageFile.getName(), "local-upload");
+            ImageInfo imgInfo = new ImageInfo(imageFile.getName(), "local-file");
             sourceInfo.setImage(imgInfo);
         }
 

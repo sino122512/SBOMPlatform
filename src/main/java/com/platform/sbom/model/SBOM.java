@@ -23,6 +23,9 @@ public class SBOM {
     private String toolName;
     private String toolVersion;
 
+    // 使用的SBOM规范及版本（如SPDX-2.2, CycloneDX-1.4）
+    private String specVersion;
+
     // 组件摘要
     @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
     @JoinColumn(name = "sbom_id", referencedColumnName = "id")
@@ -101,6 +104,14 @@ public class SBOM {
 
     public void setToolVersion(String toolVersion) {
         this.toolVersion = toolVersion;
+    }
+
+    public String getSpecVersion() {
+        return specVersion;
+    }
+
+    public void setSpecVersion(String specVersion) {
+        this.specVersion = specVersion;
     }
 
     public List<Component> getComponents() {

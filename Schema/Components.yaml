@@ -1,0 +1,30 @@
+components:
+  type: array
+  items:
+    type: object
+    properties:
+      id:
+        type: string            # UUID 或 PURL 形式的唯一标识
+      name:
+        type: string            # 组件名称
+      version:
+        type: string            # 组件版本
+      type:
+        type: string            # 组件类型 (library, application, file...)
+      license:
+        type: string            # 许可证标识 (SPDX 标准 ID)
+      purl:
+        type: string            # Package URL
+      cpe:
+        type: string            # CPE 标识
+      description:
+        type: string            # 组件描述
+      externalReferences:
+        type: array
+        items:
+          type: object
+          properties:
+            type:
+              type: string      # build-meta, distribution, website...
+            url:
+              type: string

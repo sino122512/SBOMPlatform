@@ -26,73 +26,126 @@ public class SBOMConverter {
     public String toSpdxJson(SBOM sbom) throws Exception {
         ObjectNode root = objectMapper.createObjectNode();
         // SPDX document metadata
-        root.put("SPDXVersion", "SPDX-2.3");
+        root.put("SPDXVersion", sbom.getSpecVersion() != null && sbom.getSpecVersion().startsWith("SPDX") ?
+                sbom.getSpecVersion() : "SPDX-2.3");
         root.put("DataLicense", "CC0-1.0");
-        root.put("SPDXID", "SPDXRef-DOCUMENT-" + sbom.getSbomId());
-        root.put("DocumentName", sbom.getName());
-        root.put("DocumentNamespace", sbom.getNamespace());
-        root.put("CreatorTool", sbom.getToolName() + "@" + sbom.getToolVersion());
-        root.put("Created", sbom.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME));
+        root.put("SPDXID", "SPDXRef-DOCUMENT");
+        root.put("name", sbom.getName());
+        root.put("documentNamespace", sbom.getNamespace());
+        
+        // 创建者信息
+        ArrayNode creators = objectMapper.createArrayNode();
+        creators.add("Tool: " + sbom.getToolName() + "-" + sbom.getToolVersion());
+        root.set("creator", creators);
+        
+        root.put("created", sbom.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME));
 
         // Packages array
-        ArrayNode pkgs = objectMapper.createArrayNode();
+        ArrayNode packagesArray = objectMapper.createArrayNode();
         for (com.platform.sbom.model.Component comp : sbom.getComponents()) {
-            ObjectNode p = pkgs.addObject();
-            // use sbomRef as SPDXID
-            p.put("SPDXID", comp.getSbomRef());
-            p.put("PackageName", comp.getName());
-            p.put("PackageVersion", comp.getVersion());
-            p.put("PackageLicenseDeclared", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
-            p.put("PackageDownloadLocation", comp.getPurl() != null ? comp.getPurl() : "NOASSERTION");
-            p.put("PackageChecksum", "NOASSERTION");
-            p.put("PackageSupplier", comp.getVendor() != null ? comp.getVendor() : "NOASSERTION");
-            p.put("PackageVerificationCode", "");
-            p.put("PackageDescription", comp.getDescription() != null ? comp.getDescription() : "");
+            ObjectNode pkg = packagesArray.addObject();
+            // 使用SPDXRef-前缀的sbomRef作为SPDXID
+            String spdxId = comp.getSbomRef();
+            if (!spdxId.startsWith("SPDXRef-")) {
+                spdxId = "SPDXRef-" + spdxId;
+            }
+            pkg.put("SPDXID", spdxId);
+            pkg.put("name", comp.getName());
+            pkg.put("versionInfo", comp.getVersion());
+            pkg.put("licenseConcluded", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
+            pkg.put("licenseDeclared", comp.getLicense() != null ? comp.getLicense() : "NOASSERTION");
+            pkg.put("downloadLocation", comp.getPurl() != null ? comp.getPurl() : "NOASSERTION");
+            pkg.put("filesAnalyzed", false);
+            pkg.put("supplier", comp.getVendor() != null ? "Organization: " + comp.getVendor() : "NOASSERTION");
+            pkg.put("description", comp.getDescription() != null ? comp.getDescription() : "");
+            
+            // 添加primaryPackagePurpose
+            pkg.put("primaryPackagePurpose", comp.getType());
 
-            // 添加新的元数据
-            if (comp.getFilePath() != null) {
-                p.put("PackageFileName", comp.getFilePath());
+            // 添加外部引用
+            ArrayNode externalRefs = objectMapper.createArrayNode();
+            if (comp.getPurl() != null) {
+                ObjectNode purlRef = externalRefs.addObject();
+                purlRef.put("referenceCategory", "PACKAGE-MANAGER");
+                purlRef.put("referenceType", "purl");
+                purlRef.put("referenceLocator", comp.getPurl());
+            }
+            
+            if (comp.getCpe() != null) {
+                ObjectNode cpeRef = externalRefs.addObject();
+                cpeRef.put("referenceCategory", "SECURITY");
+                cpeRef.put("referenceType", "cpe23Type");
+                cpeRef.put("referenceLocator", comp.getCpe());
+            }
+            
+            if (externalRefs.size() > 0) {
+                pkg.set("externalRefs", externalRefs);
             }
 
-            if (comp.getHomePage() != null) {
-                p.put("PackageHomePage", comp.getHomePage());
-            }
+        
+        }
+        root.set("packages", packagesArray);
 
-            if (comp.getSourceRepo() != null) {
-                p.put("PackageSourceInfo", comp.getSourceRepo());
+        // 添加依赖关系
+        ArrayNode relationships = objectMapper.createArrayNode();
+        for (Dependency dep : sbom.getDependencies()) {
+            String sourceId = dep.getRef();
+            if (!sourceId.startsWith("SPDXRef-")) {
+                sourceId = "SPDXRef-" + sourceId;
+            }
+            
+            for (String targetId : dep.getDependsOn()) {
+                ObjectNode rel = relationships.addObject();
+                rel.put("spdxElementId", sourceId);
+                rel.put("relationshipType", "DEPENDS_ON");
+                if (!targetId.startsWith("SPDXRef-")) {
+                    targetId = "SPDXRef-" + targetId;
+                }
+                rel.put("relatedSpdxElement", targetId);
             }
         }
-        root.set("Packages", pkgs);
+        root.set("relationships", relationships);
 
         return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
     }
 
     public String toCycloneDxJson(SBOM sbom) throws Exception {
         ObjectNode root = objectMapper.createObjectNode();
-        // CycloneDX top-level
+        // CycloneDX top-level 规范版本
         root.put("bomFormat", "CycloneDX");
-        root.put("specVersion", "1.4");
+        root.put("specVersion", sbom.getSpecVersion() != null && sbom.getSpecVersion().startsWith("CycloneDX") ?
+                sbom.getSpecVersion().substring("CycloneDX-".length()) : "1.4");
         root.put("serialNumber", "urn:uuid:" + sbom.getSbomId());
         root.put("version", sbom.getVersion());
 
         // metadata
         ObjectNode metadata = root.putObject("metadata");
         metadata.put("timestamp", sbom.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME));
+        
+        // 添加元数据组件
+        ObjectNode component = metadata.putObject("component");
+        component.put("type", "application");
+        component.put("name", sbom.getName());
+        component.put("bom-ref", "bom-ref-" + sbom.getSbomId());
+        
         // tools
         ArrayNode tools = metadata.putArray("tools");
         ObjectNode tool = tools.addObject();
         tool.put("vendor", "SBOMPlatform");
         tool.put("name", sbom.getToolName());
         tool.put("version", sbom.getToolVersion());
+        
         // source info as metadata.property
         SourceInfo src = sbom.getSource();
         if (src != null) {
-            ObjectNode props = metadata.putObject("properties");
-            props.put("filesystem.path", src.getFilesystem().getPath());
-            props.put("filesystem.recursive", String.valueOf(src.getFilesystem().isRecursive()));
+            ArrayNode properties = metadata.putArray("properties");
+            if (src.getFilesystem() != null) {
+                addProperty(properties, "filesystem.path", src.getFilesystem().getPath());
+                addProperty(properties, "filesystem.recursive", String.valueOf(src.getFilesystem().isRecursive()));
+            }
             if (src.getImage() != null) {
-                props.put("image.id", src.getImage().getImageId());
-                props.put("image.registry", src.getImage().getRegistry());
+                addProperty(properties, "image.id", src.getImage().getImageId());
+                addProperty(properties, "image.registry", src.getImage().getRegistry());
             }
         }
 
@@ -101,49 +154,63 @@ public class SBOMConverter {
         for (com.platform.sbom.model.Component comp : sbom.getComponents()) {
             ObjectNode c = comps.addObject();
             c.put("bom-ref", comp.getSbomRef());
-            c.put("type", comp.getType());
+            
+            // 设置组件类型，根据CycloneDX规范
+            String type = mapTypeToCycloneDX(comp.getType());
+            c.put("type", type);
+            
             c.put("name", comp.getName());
             c.put("version", comp.getVersion());
 
-            // 添加supplier
+            // 添加发布商
             if (comp.getVendor() != null) {
-                c.put("supplier", comp.getVendor());
+                c.put("publisher", comp.getVendor());
+            }
+            
+            // 添加描述
+            if (comp.getDescription() != null) {
+                c.put("description", comp.getDescription());
             }
 
+            // 添加许可证信息
             if (comp.getLicense() != null) {
                 ArrayNode licArr = c.putArray("licenses");
                 ObjectNode lic = licArr.addObject();
-                lic.put("license", comp.getLicense());
+                // 区分SPDX许可证ID和表达式
+                if (comp.getLicense().contains(" ") || 
+                    comp.getLicense().contains("(") || 
+                    comp.getLicense().contains(")")) {
+                    lic.put("expression", comp.getLicense());
+                } else {
+                    ObjectNode licData = lic.putObject("license");
+                    licData.put("id", comp.getLicense());
+                }
             }
 
-            // 添加扩展的元数据
-            ArrayNode xr = c.putArray("externalReferences");
-
+            // 添加PURL和CPE
             if (comp.getPurl() != null) {
-                ObjectNode ref = xr.addObject();
-                ref.put("type", "purl");
-                ref.put("url", comp.getPurl());
+                c.put("purl", comp.getPurl());
             }
+            
+            if (comp.getCpe() != null) {
+                c.put("cpe", comp.getCpe());
+            }
+
+            // 添加扩展的外部引用
+            ArrayNode externalRefs = c.putArray("externalReferences");
 
             if (comp.getHomePage() != null) {
-                ObjectNode ref = xr.addObject();
+                ObjectNode ref = externalRefs.addObject();
                 ref.put("type", "website");
                 ref.put("url", comp.getHomePage());
             }
 
             if (comp.getSourceRepo() != null) {
-                ObjectNode ref = xr.addObject();
+                ObjectNode ref = externalRefs.addObject();
                 ref.put("type", "vcs");
                 ref.put("url", comp.getSourceRepo());
             }
-
-            // 添加文件路径作为属性
-            if (comp.getFilePath() != null) {
-                ObjectNode props = c.putObject("properties");
-                props.put("path", comp.getFilePath());
-            }
         }
-
 
         // dependencies (optional)
         if (sbom.getDependencies() != null && !sbom.getDependencies().isEmpty()) {
@@ -151,12 +218,54 @@ public class SBOMConverter {
             for (Dependency d : sbom.getDependencies()) {
                 ObjectNode dn = deps.addObject();
                 dn.put("ref", d.getRef());
-                ArrayNode on = dn.putArray("dependsOn");
-                d.getDependsOn().forEach(on::add);
+                if (d.getDependsOn() != null && !d.getDependsOn().isEmpty()) {
+                    ArrayNode on = dn.putArray("dependsOn");
+                    d.getDependsOn().forEach(on::add);
+                }
             }
         }
 
         return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+    }
+    
+    // 辅助方法：添加CycloneDX格式的属性
+    private void addProperty(ArrayNode properties, String name, String value) {
+        if (value != null) {
+            ObjectNode property = properties.addObject();
+            property.put("name", name);
+            property.put("value", value);
+        }
+    }
+    
+    // 辅助方法：将组件类型映射到CycloneDX规定的类型
+    private String mapTypeToCycloneDX(String type) {
+        if (type == null) return "library";
+        
+        switch (type.toLowerCase()) {
+            case "application":
+            case "app":
+                return "application";
+            case "framework":
+                return "framework";
+            case "library":
+            case "lib":
+                return "library";
+            case "container":
+                return "container";
+            case "platform":
+                return "platform";
+            case "operating-system":
+            case "os":
+                return "operating-system";
+            case "device":
+                return "device";
+            case "firmware":
+                return "firmware";
+            case "file":
+                return "file";
+            default:
+                return "library"; // 默认为library
+        }
     }
 
     public String toCustomJson(SBOM s) throws Exception {
@@ -185,7 +294,6 @@ public class SBOMConverter {
             n.put("description", c.getDescription());
 
             // 添加扩展元数据
-            n.put("filePath", c.getFilePath());
             n.put("sourceRepo", c.getSourceRepo());
             n.put("vendor", c.getVendor());
             n.put("homePage", c.getHomePage());

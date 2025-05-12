@@ -1,0 +1,18 @@
+sbom:
+  id:                            # 全局唯一 ID (UUID)
+    type: string
+    format: uuid
+  version:                       # SBOM 文档版本（整数递增）
+    type: integer
+  name:                          # 文档名称/项目名称
+    type: string
+  timestamp:                     # 生成时间 (ISO-8601)
+    type: string
+    format: date-time
+  namespace:                     # 文档命名空间 (URI)
+    type: string
+  tool:
+    name:                        # 生成工具
+      type: string
+    version:                     # 生成工具版本
+      type: string

@@ -1,0 +1,11 @@
+dependencies:
+  type: array
+  items:
+    type: object
+    properties:
+      ref:
+        type: string          # 组件 id
+      dependsOn:
+        type: array
+        items:
+          type: string        # 被依赖组件 id

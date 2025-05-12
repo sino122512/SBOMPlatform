@@ -44,9 +44,10 @@ public class SBOMController {
     @PostMapping("/generate/system")
     public ResponseEntity<SBOM> generateForSystem(@RequestParam String name,
                                                   @RequestParam("systemFolder") MultipartFile[] folder,
-                                                  @RequestParam(value="imageFile", required=false) MultipartFile img) throws Exception {
-        log.info("Generating SBOM for system: {}", name);
-        SBOM sbom = sbomService.generate(name, folder, img);
+                                                  @RequestParam(value="imageFile", required=false) MultipartFile img,
+                                                  @RequestParam(value="format", required=false, defaultValue="spdx") String format) throws Exception {
+        log.info("Generating SBOM for system: {} using {} format", name, format);
+        SBOM sbom = sbomService.generate(name, folder, img, format);
         if (sbom == null) {
             return ResponseEntity.notFound().build();
         }
@@ -58,9 +59,10 @@ public class SBOMController {
      */
     @PostMapping("/generate/container")
     public ResponseEntity<SBOM> generateForContainerImage(@RequestParam String name,
-                                                          @RequestParam String imageName) throws Exception {
-        log.info("Generating SBOM for container image: {}", imageName);
-        SBOM sbom = sbomService.generateForContainerImage(name, imageName);
+                                                          @RequestParam String imageName,
+                                                          @RequestParam(value="format", required=false, defaultValue="spdx") String format) throws Exception {
+        log.info("Generating SBOM for container image: {} using {} format", imageName, format);
+        SBOM sbom = sbomService.generateForContainerImage(name, imageName, format);
         if (sbom == null) {
             return ResponseEntity.notFound().build();
         }

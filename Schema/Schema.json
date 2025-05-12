@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Unified SBOM Schema",
+  "type": "object",
+  "properties": {
+    "sbom": { "$ref": "#/definitions/DocumentMetadata" },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Component" }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Dependency" }
+    },
+    "source": { "$ref": "#/definitions/SourceInfo" }
+  },
+  "required": ["sbom", "components", "source"],
+  "definitions": {
+    "DocumentMetadata": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "version": { "type": "integer" },
+        "name": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "namespace": { "type": "string", "format": "uri" },
+        "tool": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" }
+          },
+          "required": ["name", "version"]
+        }
+      },
+      "required": ["id", "version", "name", "timestamp", "tool"]
+    },
+    "Component": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "type": { "type": "string" },
+        "license": { "type": "string" },
+        "purl": { "type": "string", "format": "uri" },
+        "cpe": { "type": "string" },
+        "description": { "type": "string" },
+        "externalReferences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "url": { "type": "string", "format": "uri" }
+            },
+            "required": ["type", "url"]
+          }
+        }
+      },
+      "required": ["id", "name", "version", "type"]
+    },
+    "Dependency": {
+      "type": "object",
+      "properties": {
+        "ref": { "type": "string" },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["ref"]
+    },
+    "SourceInfo": {
+      "type": "object",
+      "properties": {
+        "filesystem": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "recursive": { "type": "boolean" }
+          },
+          "required": ["path"]
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "imageId": { "type": "string" },
+            "registry": { "type": "string" }
+          }
+        }
+      },
+      "required": ["filesystem"]
+    }
+  }
+}

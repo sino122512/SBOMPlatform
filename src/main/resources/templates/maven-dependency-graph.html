@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Maven依赖图</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        #graph-container {
+            width: 100%;
+            height: 700px;
+            border: 1px solid #ddd;
+            margin-top: 20px;
+            position: relative;
+        }
+        .node {
+            cursor: pointer;
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 1.5px;
+        }
+        .link {
+            fill: none;
+            stroke-opacity: 0.6;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 10px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            pointer-events: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        .controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.8);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            z-index: 100;
+        }
+        .legend {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.8);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            z-index: 100;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            border-radius: 50%;
+        }
+        .scope-filter {
+            margin-top: 10px;
+        }
+        .detail-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 300px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 101;
+            display: none;
+        }
+        .detail-panel h4 {
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 8px;
+        }
+        .detail-panel table {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .detail-panel td {
+            padding: 3px 0;
+        }
+        .detail-panel td:first-child {
+            font-weight: bold;
+            width: 30%;
+        }
+        .close-btn {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Maven依赖图</h1>
+        
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        指定Maven项目路径
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <input type="text" id="projectPath" class="form-control" placeholder="输入Maven项目路径">
+                            <button class="btn btn-primary" id="analyzeBtn">分析依赖</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        上传pom.xml文件
+                    </div>
+                    <div class="card-body">
+                        <form id="pomUploadForm" enctype="multipart/form-data">
+                            <div class="input-group mb-3">
+                                <input type="file" id="pomFile" name="file" class="form-control" accept=".xml">
+                                <button type="submit" class="btn btn-primary">上传并分析</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="graph-container" class="position-relative">
+            <div class="controls">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="togglePhysics" checked>
+                    <label class="form-check-label" for="togglePhysics">启用物理模拟</label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="toggleLabels" checked>
+                    <label class="form-check-label" for="toggleLabels">显示标签</label>
+                </div>
+                <div class="scope-filter">
+                    <label>依赖范围过滤:</label>
+                    <div class="form-check">
+                        <input class="form-check-input scope-checkbox" type="checkbox" id="scopeCompile" checked value="compile">
+                        <label class="form-check-label" for="scopeCompile">编译 (compile)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input scope-checkbox" type="checkbox" id="scopeRuntime" checked value="runtime">
+                        <label class="form-check-label" for="scopeRuntime">运行时 (runtime)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input scope-checkbox" type="checkbox" id="scopeTest" checked value="test">
+                        <label class="form-check-label" for="scopeTest">测试 (test)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input scope-checkbox" type="checkbox" id="scopeProvided" checked value="provided">
+                        <label class="form-check-label" for="scopeProvided">已提供 (provided)</label>
+                    </div>
+                </div>
+                <button id="resetBtn" class="btn btn-sm btn-outline-secondary mt-2">重置视图</button>
+            </div>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #EA4335;"></div>
+                    <span>根项目</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #4285F4;"></div>
+                    <span>Maven依赖</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #34A853;"></div>
+                    <span>其他依赖</span>
+                </div>
+                <div class="mt-2">
+                    <div class="legend-item">
+                        <div style="width:40px;height:2px;background-color:#1976D2;margin-right:5px;"></div>
+                        <span>compile</span>
+                    </div>
+                    <div class="legend-item">
+                        <div style="width:40px;height:2px;background-color:#388E3C;margin-right:5px;"></div>
+                        <span>runtime</span>
+                    </div>
+                    <div class="legend-item">
+                        <div style="width:40px;height:2px;background-color:#FFA000;margin-right:5px;"></div>
+                        <span>test</span>
+                    </div>
+                    <div class="legend-item">
+                        <div style="width:40px;height:2px;background-color:#7B1FA2;margin-right:5px;"></div>
+                        <span>provided</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="detail-panel" id="detailPanel">
+            <div class="close-btn" id="closeDetailPanel">&times;</div>
+            <h4 id="detailTitle">依赖详情</h4>
+            <table>
+                <tr>
+                    <td>组ID:</td>
+                    <td id="detailGroupId"></td>
+                </tr>
+                <tr>
+                    <td>构件ID:</td>
+                    <td id="detailArtifactId"></td>
+                </tr>
+                <tr>
+                    <td>版本:</td>
+                    <td id="detailVersion"></td>
+                </tr>
+                <tr>
+                    <td>范围:</td>
+                    <td id="detailScope"></td>
+                </tr>
+                <tr>
+                    <td>打包方式:</td>
+                    <td id="detailPackaging"></td>
+                </tr>
+                <tr>
+                    <td>被引用次数:</td>
+                    <td id="detailWeight"></td>
+                </tr>
+                <tr>
+                    <td>描述:</td>
+                    <td id="detailDescription"></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('analyzeBtn').addEventListener('click', function() {
+            const projectPath = document.getElementById('projectPath').value;
+            if (projectPath) {
+                showLoading();
+                fetchDependencyGraph(projectPath);
+            } else {
+                alert('请输入Maven项目路径');
+            }
+        });
+        
+        document.getElementById('pomUploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('pomFile');
+            if (fileInput.files.length > 0) {
+                showLoading();
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                
+                fetch('/dependency-graph/maven/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.error) {
+                        alert('错误: ' + data.error);
+                    } else {
+                        renderGraph(data);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    console.error('Error:', error);
+                    alert('上传分析失败');
+                });
+            } else {
+                alert('请选择pom.xml文件');
+            }
+        });
+        
+        function showLoading() {
+            const container = document.getElementById('graph-container');
+            container.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">正在分析依赖关系，请稍候...</p></div>';
+        }
+        
+        function hideLoading() {
+            const container = document.getElementById('graph-container');
+            container.innerHTML = '';
+        }
+        
+        function fetchDependencyGraph(projectPath) {
+            fetch(`/dependency-graph/maven/data?projectPath=${encodeURIComponent(projectPath)}`)
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.error) {
+                        alert('错误: ' + data.error);
+                    } else {
+                        renderGraph(data);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    console.error('Error:', error);
+                    alert('获取依赖图数据失败');
+                });
+        }
+        
+        let currentGraphData = null;
+        let simulation = null;
+        
+        function renderGraph(data) {
+            try {
+                console.log("收到的依赖图数据:", data);
+                
+                // 验证数据格式是否正确
+                if (!data.nodes || !Array.isArray(data.nodes) || !data.links || !Array.isArray(data.links)) {
+                    console.error("数据格式不正确:", data);
+                    showError("数据格式不正确，无法渲染依赖图");
+                    return;
+                }
+                
+                if (data.nodes.length === 0) {
+                    console.warn("没有依赖节点数据");
+                    showError("未检测到依赖关系，可能是上传的POM文件没有依赖项");
+                    return;
+                }
+                
+                currentGraphData = JSON.parse(JSON.stringify(data)); // 深拷贝
+                const container = document.getElementById('graph-container');
+                const width = container.clientWidth || 800;
+                const height = 700;
+                
+                // 清除加载信息或错误信息
+                container.innerHTML = '';
+                
+                // 创建控件容器
+                if (!document.querySelector('.controls')) {
+                    const controls = document.createElement('div');
+                    controls.className = 'controls';
+                    controls.innerHTML = `
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="togglePhysics" checked>
+                            <label class="form-check-label" for="togglePhysics">启用物理模拟</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="toggleLabels" checked>
+                            <label class="form-check-label" for="toggleLabels">显示标签</label>
+                        </div>
+                        <div class="scope-filter">
+                            <label>依赖范围过滤:</label>
+                            <div class="form-check">
+                                <input class="form-check-input scope-checkbox" type="checkbox" id="scopeCompile" checked value="compile">
+                                <label class="form-check-label" for="scopeCompile">编译 (compile)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input scope-checkbox" type="checkbox" id="scopeRuntime" checked value="runtime">
+                                <label class="form-check-label" for="scopeRuntime">运行时 (runtime)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input scope-checkbox" type="checkbox" id="scopeTest" checked value="test">
+                                <label class="form-check-label" for="scopeTest">测试 (test)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input scope-checkbox" type="checkbox" id="scopeProvided" checked value="provided">
+                                <label class="form-check-label" for="scopeProvided">已提供 (provided)</label>
+                            </div>
+                        </div>
+                        <button id="resetBtn" class="btn btn-sm btn-outline-secondary mt-2">重置视图</button>
+                    `;
+                    container.appendChild(controls);
+                }
+                
+                if (!document.querySelector('.legend')) {
+                    const legend = document.createElement('div');
+                    legend.className = 'legend';
+                    legend.innerHTML = `
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #EA4335;"></div>
+                            <span>根项目</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #4285F4;"></div>
+                            <span>Maven依赖</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #34A853;"></div>
+                            <span>其他依赖</span>
+                        </div>
+                        <div class="mt-2">
+                            <div class="legend-item">
+                                <div style="width:40px;height:2px;background-color:#1976D2;margin-right:5px;"></div>
+                                <span>compile</span>
+                            </div>
+                            <div class="legend-item">
+                                <div style="width:40px;height:2px;background-color:#388E3C;margin-right:5px;"></div>
+                                <span>runtime</span>
+                            </div>
+                            <div class="legend-item">
+                                <div style="width:40px;height:2px;background-color:#FFA000;margin-right:5px;"></div>
+                                <span>test</span>
+                            </div>
+                            <div class="legend-item">
+                                <div style="width:40px;height:2px;background-color:#7B1FA2;margin-right:5px;"></div>
+                                <span>provided</span>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(legend);
+                }
+                
+                // 重置内容
+                d3.select("#graph-container svg").remove();
+                
+                const tooltip = d3.select("body").select(".tooltip");
+                if (tooltip.empty()) {
+                    d3.select("body").append("div")
+                        .attr("class", "tooltip")
+                        .style("opacity", 0);
+                }
+                
+                const svg = d3.select("#graph-container").append("svg")
+                    .attr("width", width)
+                    .attr("height", height);
+                    
+                const g = svg.append("g");
+                
+                // 添加缩放功能
+                svg.call(d3.zoom()
+                    .scaleExtent([0.1, 4])
+                    .on("zoom", (event) => {
+                        g.attr("transform", event.transform);
+                    }));
+                
+                // 确保节点和连接的id属性是唯一的字符串
+                data.nodes.forEach(node => {
+                    if (!node.id) node.id = `node-${Math.random().toString(36).substr(2, 9)}`;
+                    else if (typeof node.id !== 'string') node.id = String(node.id);
+                });
+                
+                // 确保连接的source和target属性指向正确的节点id
+                data.links.forEach(link => {
+                    if (typeof link.source === 'object') link.source = link.source.id;
+                    if (typeof link.target === 'object') link.target = link.target.id;
+                    if (!link.scope) link.scope = 'compile';
+                });
+                
+                // 创建力导向图
+                simulation = d3.forceSimulation(data.nodes)
+                    .force("link", d3.forceLink(data.links).id(d => d.id).distance(100))
+                    .force("charge", d3.forceManyBody().strength(-300))
+                    .force("center", d3.forceCenter(width / 2, height / 2))
+                    .force("collide", d3.forceCollide(d => (d.size || 20) * 1.2));
+                    
+                // 绘制连线
+                const link = g.append("g")
+                    .attr("class", "links")
+                    .selectAll("line")
+                    .data(data.links)
+                    .enter().append("line")
+                    .attr("class", "link")
+                    .attr("stroke-width", d => d.value || 1)
+                    .attr("stroke", d => getLinkColor(d.scope))
+                    .attr("data-scope", d => d.scope || "compile");
+                    
+                // 绘制节点
+                const node = g.append("g")
+                    .attr("class", "nodes")
+                    .selectAll(".node")
+                    .data(data.nodes)
+                    .enter().append("g")
+                    .attr("class", "node")
+                    .attr("data-id", d => d.id)
+                    .call(d3.drag()
+                        .on("start", dragstarted)
+                        .on("drag", dragged)
+                        .on("end", dragended));
+                        
+                // 节点圆圈
+                node.append("circle")
+                    .attr("r", d => d.size || 10)
+                    .attr("fill", d => getNodeColor(d.type));
+                    
+                // 节点文本
+                const labels = node.append("text")
+                    .attr("dy", -15)
+                    .attr("text-anchor", "middle")
+                    .text(d => d.name || '未命名')
+                    .style("font-size", "12px")
+                    .style("pointer-events", "none");
+                    
+                // 鼠标悬停显示详情
+                node.on("mouseover", function(event, d) {
+                    d3.select("body").select(".tooltip")
+                        .transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                        
+                    let html = `<strong>${d.name || '未命名'}</strong><br/>`;
+                    if (d.version) html += `版本: ${d.version}<br/>`;
+                    if (d.groupId) html += `组ID: ${d.groupId}<br/>`;
+                    if (d.scope) html += `范围: ${d.scope}<br/>`;
+                    if (d.weight) html += `被引用: ${d.weight}次<br/>`;
+                    
+                    d3.select("body").select(".tooltip")
+                        .html(html)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    d3.select("body").select(".tooltip")
+                        .transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                })
+                .on("click", function(event, d) {
+                    showDetailPanel(d);
+                    event.stopPropagation();
+                });
+                
+                // 点击空白区域关闭详情面板
+                svg.on("click", function() {
+                    hideDetailPanel();
+                });
+                
+                // 模拟更新
+                simulation.on("tick", () => {
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+                    
+                    node.attr("transform", d => `translate(${d.x},${d.y})`);
+                });
+                
+                // 监听控件事件
+                document.getElementById('togglePhysics').addEventListener('change', function() {
+                    if (this.checked) {
+                        simulation.alphaTarget(0.3).restart();
+                    } else {
+                        simulation.alphaTarget(0).stop();
+                    }
+                });
+                
+                document.getElementById('toggleLabels').addEventListener('change', function() {
+                    if (this.checked) {
+                        labels.style("display", "block");
+                    } else {
+                        labels.style("display", "none");
+                    }
+                });
+                
+                // 范围过滤
+                document.querySelectorAll('.scope-checkbox').forEach(checkbox => {
+                    checkbox.addEventListener('change', applyFilters);
+                });
+                
+                // 重置按钮
+                document.getElementById('resetBtn').addEventListener('click', function() {
+                    simulation.alpha(1).restart();
+                    svg.transition().duration(750).call(
+                        d3.zoom().transform,
+                        d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8)
+                    );
+                });
+                
+                // 详情面板关闭按钮
+                document.getElementById('closeDetailPanel').addEventListener('click', hideDetailPanel);
+                
+                // 模拟点击重置按钮让图形居中
+                setTimeout(() => {
+                    document.getElementById('resetBtn').click();
+                }, 500);
+                
+            } catch (error) {
+                console.error("渲染图形时出错:", error);
+                showError("渲染依赖图时发生错误: " + error.message);
+            }
+            
+            // 拖拽功能
+            function dragstarted(event) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+            
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+            
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+            }
+        }
+        
+        // 应用过滤器
+        function applyFilters() {
+            if (!currentGraphData) return;
+            
+            const selectedScopes = Array.from(document.querySelectorAll('.scope-checkbox:checked'))
+                .map(checkbox => checkbox.value);
+                
+            // 过滤连接
+            d3.selectAll(".link")
+                .style("visibility", function() {
+                    const scope = d3.select(this).attr("data-scope") || "compile";
+                    return selectedScopes.includes(scope) ? "visible" : "hidden";
+                });
+        }
+        
+        // 获取节点颜色
+        function getNodeColor(type) {
+            switch(type) {
+                case 'maven': return '#4285F4';
+                case 'root': return '#EA4335';
+                default: return '#34A853';
+            }
+        }
+        
+        // 获取连接颜色
+        function getLinkColor(scope) {
+            switch(scope) {
+                case 'compile': return '#1976D2';
+                case 'runtime': return '#388E3C';
+                case 'test': return '#FFA000';
+                case 'provided': return '#7B1FA2';
+                default: return '#999999';
+            }
+        }
+        
+        // 显示详情面板
+        function showDetailPanel(nodeData) {
+            const panel = document.getElementById('detailPanel');
+            document.getElementById('detailTitle').textContent = nodeData.name || '依赖详情';
+            document.getElementById('detailGroupId').textContent = nodeData.groupId || '-';
+            document.getElementById('detailArtifactId').textContent = nodeData.artifactId ? nodeData.artifactId.split(':')[1] : '-';
+            document.getElementById('detailVersion').textContent = nodeData.version || '-';
+            document.getElementById('detailScope').textContent = nodeData.scope || 'compile';
+            document.getElementById('detailPackaging').textContent = nodeData.packaging || 'jar';
+            document.getElementById('detailWeight').textContent = nodeData.weight || '0';
+            document.getElementById('detailDescription').textContent = nodeData.description || '-';
+            
+            panel.style.display = 'block';
+        }
+        
+        // 隐藏详情面板
+        function hideDetailPanel() {
+            document.getElementById('detailPanel').style.display = 'none';
+        }
+        
+        // 显示错误信息
+        function showError(message) {
+            const container = document.getElementById('graph-container');
+            container.innerHTML = `<div class="alert alert-danger m-4" role="alert">
+                <h4 class="alert-heading">渲染失败</h4>
+                <p>${message}</p>
+            </div>`;
+        }
+        
+        // 初始化页面
+        document.addEventListener('DOMContentLoaded', function() {
+            // 为控件添加事件监听器(如果需要重新初始化)
+            const physicsToggle = document.getElementById('togglePhysics');
+            if (physicsToggle) {
+                physicsToggle.addEventListener('change', function() {
+                    if (this.checked && simulation) {
+                        simulation.alphaTarget(0.3).restart();
+                    } else if (simulation) {
+                        simulation.alphaTarget(0).stop();
+                    }
+                });
+            }
+            
+            const labelsToggle = document.getElementById('toggleLabels');
+            if (labelsToggle) {
+                labelsToggle.addEventListener('change', function() {
+                    if (this.checked) {
+                        d3.selectAll(".node text").style("display", "block");
+                    } else {
+                        d3.selectAll(".node text").style("display", "none");
+                    }
+                });
+            }
+            
+            document.querySelectorAll('.scope-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', applyFilters);
+            });
+            
+            const resetBtn = document.getElementById('resetBtn');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', function() {
+                    if (simulation) {
+                        simulation.alpha(1).restart();
+                        d3.select("#graph-container svg").transition().duration(750).call(
+                            d3.zoom().transform,
+                            d3.zoomIdentity.translate(0, 0).scale(1)
+                        );
+                    }
+                });
+            }
+            
+            const closeDetailBtn = document.getElementById('closeDetailPanel');
+            if (closeDetailBtn) {
+                closeDetailBtn.addEventListener('click', hideDetailPanel);
+            }
+        });
+    </script>
+</body>
+</html>
